@@ -1,19 +1,46 @@
-# Ignore virtual environment
+# Virtual environment
 .venv/
+venv/
 
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 
-# Jupyter Notebook checkpoints
+# Jupyter
 .ipynb_checkpoints/
+.ruff_cache/
 
-# VS Code settings
+# Editors / OS
 .vscode/
-
-# Environment variables
-.env
-
-# Operating system files
+.idea/
 .DS_Store
 Thumbs.db
+
+# Secrets
+.env
+
+# --- project ---
+# DATA/raw/*.db is COMMITTED deliberately (3 MB, keeps the project reproducible).
+# Derived data is not.
+DATA/interim/*
+DATA/processed/*
+!DATA/**/.gitkeep
+
+# Model artifacts and experiment tracking
+MODELS/*
+!MODELS/.gitkeep
+mlruns/
+mlartifacts/
+*.pkl
+*.joblib
+
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+
+# Planning docs kept local
+decisions.md
