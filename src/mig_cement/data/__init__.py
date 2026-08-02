@@ -1,1 +1,4 @@
-from . import load, preprocess, validate  # noqa: F401
+"""Ingestion, validation and cleaning. Import submodules explicitly:
+
+    from mig_cement.data import load, validate, preprocess
+"""

@@ -7,6 +7,5 @@ DATA/
 MODELS/
 REPORTS/
 mlruns/
-tests/
 infra/
 *.md
