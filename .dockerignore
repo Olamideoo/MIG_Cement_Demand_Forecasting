@@ -1,0 +1,12 @@
+.git/
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+NOTEBOOKS/
+DATA/
+MODELS/
+REPORTS/
+mlruns/
+tests/
+infra/
+*.md
