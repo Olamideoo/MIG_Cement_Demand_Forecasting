@@ -44,3 +44,4 @@ infra/.terraform/
 
 # Planning docs kept local
 decisions.md
+WORKFLOW.md
