@@ -19,7 +19,8 @@ TARGET = "y"
 
 LAGS = [1, 7, 14, 28]
 WINDOWS = [7, 14, 28]
-RAIN_HEAVY_MM = 10.0  # threshold set in notebook 03; do not hardcode elsewhere
+RAIN_STOP_MM = 15.0  # empirical step: >15 mm abandons the pour (notebook 03)
+FROST_C = 0.0        # empirical step: <0 C cuts volume ~20% (notebook 03)
 
 
 def add_lags(df: pd.DataFrame, col: str = TARGET) -> pd.DataFrame:
@@ -48,11 +49,14 @@ def add_rolling(df: pd.DataFrame, col: str = TARGET) -> pd.DataFrame:
 
 
 def add_weather(df: pd.DataFrame) -> pd.DataFrame:
-    """Weather features. Rain is threshold-like rather than linear (notebook 03);
-    raw correlation with consumption is only -0.18, temperature is negligible."""
+    """Weather features, both step functions rather than linear terms.
+
+    >15 mm rain: pour abandoned (zero-consumption 9% -> 68%).
+    <0 C: pour proceeds at ~20% lower volume, zero rate unchanged.
+    """
     out = df.copy()
-    out["rain_heavy"] = (out.rain_mm > RAIN_HEAVY_MM).astype(int)
-    out["temp_below_5"] = (out.avg_temp_c < 5).astype(int)
+    out["pour_blocked_rain"] = (out.rain_mm > RAIN_STOP_MM).astype(int)
+    out["frost"] = (out.avg_temp_c < FROST_C).astype(int)
     return out
 
 
