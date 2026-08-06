@@ -34,14 +34,45 @@ def bias(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(y_pred - y_true))
 
 
-def mape_weekly(df: pd.DataFrame) -> float:
-    """MAPE on weekly aggregates only. Still drops ~9% zero weeks."""
-    raise NotImplementedError
+def mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.mean(np.abs(y_true - y_pred)))
 
 
-def evaluate(y_true, y_pred, y_train=None) -> dict[str, float]:
-    """Full metric set for MLflow logging."""
-    raise NotImplementedError
+def mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """MAPE over non-zero actuals only. Reports NaN if nothing is left."""
+    y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
+    m = np.abs(y_true) > 1e-9
+    if not m.any():
+        return np.nan
+    return float(np.mean(np.abs((y_true[m] - y_pred[m]) / y_true[m])))
+
+
+def evaluate(y_true, y_pred, y_train=None, season: int = 1) -> dict[str, float]:
+    """Full metric set. WAPE is primary; MAPE is only meaningful on aggregates."""
+    y_true = np.asarray(y_true, float)
+    y_pred = np.asarray(y_pred, float)
+    out = {
+        "WAPE": wape(y_true, y_pred),
+        "RMSE": rmse(y_true, y_pred),
+        "MAE": mae(y_true, y_pred),
+        "bias": bias(y_true, y_pred),
+        "MAPE_nonzero": mape(y_true, y_pred),
+        "pct_zero_actual": float((np.abs(y_true) < 1e-9).mean()),
+    }
+    if y_train is not None:
+        out["MASE"] = mase(y_true, y_pred, np.asarray(y_train, float), season)
+    return out
+
+
+def time_split(df: pd.DataFrame, train_end: str, val_end: str,
+               date_col: str = "date") -> dict[str, pd.DataFrame]:
+    """Chronological train / validation / test split. Never random."""
+    d = pd.to_datetime(df[date_col])
+    return {
+        "train": df[d <= train_end],
+        "val": df[(d > train_end) & (d <= val_end)],
+        "test": df[d > val_end],
+    }
 
 
 def rolling_origin_backtest(panel: pd.DataFrame, model, horizon_weeks: int = 8):
