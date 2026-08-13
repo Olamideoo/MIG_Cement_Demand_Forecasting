@@ -1,4 +1,4 @@
-.PHONY: setup lint format clean-data features train api dashboard up down deploy
+.PHONY: setup lint format clean-data pipeline features train api dashboard up down deploy
 
 setup:            ## create venv, install deps, install package editable
 	python -m venv .venv
@@ -20,6 +20,12 @@ clean-data:       ## raw SQLite -> validated clean panel
 
 features:         ## clean panel -> feature matrix
 	python -m mig_cement.features.build
+
+pipeline:         ## full run: SQLite -> clean -> features -> train -> save model
+	python -m mig_cement.pipeline
+
+pipeline-dry:     ## same, but score without writing artefacts
+	python -m mig_cement.pipeline --dry-run
 
 train:            ## train + log to MLflow (MODEL=lightgbm)
 	python -m mig_cement.models.train --model $(or $(MODEL),lightgbm)

@@ -1,100 +1,89 @@
-"""Feature construction.
+"""Feature construction — the weekly modelling panel.
 
-CRITICAL: this is the single implementation used by BOTH models/train.py and
-api/predict.py. Never copy it into the API - see WORKFLOW.md section 2.3.
+CRITICAL: this is the single implementation used by BOTH training and inference.
+`pipeline.py` calls it to build the training panel; `api/predict.py` calls it to build
+the panel for a forecast request. Never copy this logic into either.
 
-It must work on the full panel and on one (site_id, cement_type) series, so
-every operation is grouped by the series key and every rolling statistic is
-shifted by 1 to avoid leakage.
-
-The justification for each feature lives in NOTEBOOKS/03_Feature_Engineering.ipynb.
+The frozen model uses 8 features, all derived from the pour schedule and site
+attributes. Weather, inventory state and target lags are deliberately excluded —
+none are knowable at an 8-week ordering horizon. See notebook 04 for the ablation.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-KEY = ["site_id", "cement_type"]
 TARGET = "y"
+SCHEDULE_COLS = ["planned_pour_tonnes", "planned_pour_next_7",
+                 "planned_pour_next_14", "days_since_planned_pour"]
+CATEGORICAL_COLS = ["site_id", "region", "behavior"]
+FEATURES = SCHEDULE_COLS + ["silo_capacity"] + CATEGORICAL_COLS
 
-LAGS = [1, 7, 14, 28]
-WINDOWS = [7, 14, 28]
-RAIN_STOP_MM = 15.0  # empirical step: >15 mm abandons the pour (notebook 03)
-FROST_C = 0.0        # empirical step: <0 C cuts volume ~20% (notebook 03)
-
-
-def add_lags(df: pd.DataFrame, col: str = TARGET) -> pd.DataFrame:
-    """Lagged target values. Safe by construction - lag >= 1."""
-    out = df.copy()
-    g = out.groupby(KEY, observed=True)[col]
-    for lag in LAGS:
-        out[f"{col}_lag_{lag}"] = g.shift(lag)
-    return out
-
-
-def add_rolling(df: pd.DataFrame, col: str = TARGET) -> pd.DataFrame:
-    """Rolling mean/std of the target. shift(1) BEFORE rolling - the window must
-    exclude the current row or the target leaks into its own feature."""
-    out = df.copy()
-    g = out.groupby(KEY, observed=True)[col]
-    for w in WINDOWS:
-        shifted = g.shift(1)
-        out[f"{col}_roll_mean_{w}"] = shifted.groupby(
-            [out[k] for k in KEY], observed=True
-        ).transform(lambda s, w=w: s.rolling(w, min_periods=1).mean())
-        out[f"{col}_roll_std_{w}"] = shifted.groupby(
-            [out[k] for k in KEY], observed=True
-        ).transform(lambda s, w=w: s.rolling(w, min_periods=2).std())
-    return out
+WEEKLY_AGG = {
+    TARGET: "sum",
+    "planned_pour_tonnes": "sum",
+    "planned_pour_next_7": "last",
+    "planned_pour_next_14": "last",
+    "days_since_planned_pour": "first",
+    "silo_capacity": "first",
+    "region": "first",
+    "behavior": "first",
+}
 
 
-def add_weather(df: pd.DataFrame) -> pd.DataFrame:
-    """Weather features, both step functions rather than linear terms.
+def add_schedule_features(daily: pd.DataFrame) -> pd.DataFrame:
+    """Forward-looking pour features.
 
-    >15 mm rain: pour abandoned (zero-consumption 9% -> 68%).
-    <0 C: pour proceeds at ~20% lower volume, zero rate unchanged.
+    The schedule is known in advance, so summing ahead uses no information the
+    business would not already hold when placing an order.
     """
-    out = df.copy()
-    out["pour_blocked_rain"] = (out.rain_mm > RAIN_STOP_MM).astype(int)
-    out["frost"] = (out.avg_temp_c < FROST_C).astype(int)
+    out = daily.sort_values(["site_id", "date"]).copy()
+
+    def forward_sum(s: pd.Series, window: int) -> pd.Series:
+        return s.iloc[::-1].rolling(window, min_periods=1).sum().iloc[::-1]
+
+    for window in (7, 14):
+        out[f"planned_pour_next_{window}"] = (
+            out.groupby("site_id")["planned_pour_tonnes"]
+               .transform(lambda s, w=window: forward_sum(s, w))
+        )
+
+    pour_day = out["date"].where(out["planned_pour_tonnes"] > 0)
+    last_pour = pour_day.groupby(out["site_id"]).ffill()
+    out["days_since_planned_pour"] = (out["date"] - last_pour).dt.days
     return out
 
 
-def add_pour_schedule(df: pd.DataFrame) -> pd.DataFrame:
-    """Planned pour features. planned_pour_tonnes is the strongest single
-    predictor (r=0.78) and IS known ahead of time, so forward sums are legal."""
-    raise NotImplementedError
+def to_weekly(daily: pd.DataFrame, drop_partial: bool = True
+              ) -> tuple[pd.DataFrame, int]:
+    """Aggregate to one row per site-week, labelled by the Monday start.
 
-
-def add_inventory_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Cover days, silo utilisation, turnover. Uses opening inventory only -
-    closing inventory of day t is not known when forecasting day t."""
-    raise NotImplementedError
-
-
-def add_calendar(df: pd.DataFrame) -> pd.DataFrame:
-    """Calendar features. Note the audit found no meaningful weekday or monthly
-    seasonality (23.2-23.9 t by weekday), so expect these to contribute little."""
-    out = df.copy()
-    out["dayofweek"] = out.date.dt.dayofweek
-    out["month"] = out.date.dt.month
-    out["is_weekend"] = (out.dayofweek >= 5).astype(int)
-    return out
-
-
-def build_features(df: pd.DataFrame, *, for_inference: bool = False) -> pd.DataFrame:
-    """Full feature pipeline. Same call signature at train and serve time.
-
-    Args:
-        df: clean panel, one row per (date, site_id, cement_type), target in `y`.
-        for_inference: when True, skip target-derived columns that are unavailable
-            for future dates and expect them supplied by the recursive forecaster.
+    Partial weeks are dropped by default. `resample` opens and closes each series
+    with buckets holding fewer than 7 days, and those average ~50 t against ~166 t
+    for a full week — they read as a demand collapse rather than a short bucket.
     """
-    raise NotImplementedError
+    df = daily.copy()
+    df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
+
+    agg = {k: v for k, v in WEEKLY_AGG.items() if k in df.columns}
+    weekly = df.groupby(["site_id", "week"], as_index=False).agg(agg)
+    weekly["n_days"] = df.groupby(["site_id", "week"]).size().values
+
+    partial = weekly.n_days < 7
+    if drop_partial:
+        weekly = weekly[~partial]
+
+    weekly = (weekly.drop(columns="n_days")
+              .rename(columns={"week": "date"})
+              .sort_values(["site_id", "date"]).reset_index(drop=True))
+
+    for col in CATEGORICAL_COLS:
+        if col in weekly.columns:
+            weekly[col] = weekly[col].astype(str)
+
+    return weekly, int(partial.sum())
 
 
-def feature_columns(df: pd.DataFrame) -> list[str]:
-    """Ordered feature list. Persist this with the model - column order must match
-    between training and inference or predictions silently degrade."""
-    drop = {TARGET, "date", "consumed_tonnes", "closing_inventory_tonnes"}
-    return [c for c in df.columns if c not in drop]
+def build_weekly_panel(clean_daily: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Cleaned daily panel -> weekly per-site modelling panel."""
+    return to_weekly(add_schedule_features(clean_daily))
