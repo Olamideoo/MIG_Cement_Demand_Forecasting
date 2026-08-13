@@ -33,8 +33,8 @@ train:            ## train + log to MLflow (MODEL=lightgbm)
 api:
 	uvicorn mig_cement.api.main:app --reload --port 8000
 
-dashboard:
-	python DASHBOARD/app.py
+dashboard:        ## run the Streamlit operations dashboard
+	streamlit run DASHBOARD/app.py
 
 up:
 	docker compose -f docker/docker-compose.yml up --build
