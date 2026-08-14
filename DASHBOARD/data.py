@@ -96,18 +96,10 @@ def get_simulation() -> pd.DataFrame:
     if fc.empty:
         return pd.DataFrame()
 
-    clean = get_clean_daily().copy()
-    clean["week"] = clean["date"].dt.to_period("W-SUN").dt.start_time
-    daily = clean[clean.week.isin(fc.date.unique())].merge(
-        fc[["site_id", "date", "forecast_tonnes"]]
-          .rename(columns={"date": "week", "forecast_tonnes": "week_forecast"}),
-        on=["site_id", "week"], how="inner")
-
-    week_plan = daily.groupby(["site_id", "week"]).planned_pour_tonnes.transform("sum")
-    daily["day_forecast"] = daily.week_forecast * np.where(
-        week_plan > 0, daily.planned_pour_tonnes / week_plan, 1 / 7)
-    daily = daily.sort_values(["site_id", "date"]).reset_index(drop=True)
-
+    # Disaggregation lives in `inventory.simulate` so the API and the dashboard
+    # cannot drift apart on how a weekly forecast becomes a daily plan.
+    daily = inv.to_daily_plan(get_clean_daily(),
+                              fc[["site_id", "date", "forecast_tonnes"]])
     return inv.simulate(daily, inv.safety_stock(get_site_sigma()))
 
 

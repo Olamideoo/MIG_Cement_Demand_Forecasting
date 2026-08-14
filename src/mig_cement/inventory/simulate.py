@@ -58,6 +58,46 @@ def reorder_point(forecast_daily: float, safety: float, capacity: float,
 
 
 # --------------------------------------------------------------------------- #
+# turning a weekly forecast into the daily plan the simulation consumes
+# --------------------------------------------------------------------------- #
+def to_daily_plan(clean_daily: pd.DataFrame,
+                  weekly_forecast: pd.DataFrame) -> pd.DataFrame:
+    """Spread each weekly forecast across its days, in proportion to planned pour.
+
+    The model forecasts a week; the silo empties a day at a time. Splitting by the
+    pour schedule rather than evenly matters because pours cluster - an even split
+    would show stock the site does not have on the day it pours.
+
+    Args:
+        clean_daily: cleaned daily panel.
+        weekly_forecast: `site_id`, `date` (Monday of the week), `forecast_tonnes`.
+
+    Returns the daily rows `simulate` expects, for the forecast weeks only.
+    """
+    need = {"site_id", "date", "forecast_tonnes"}
+    missing = need - set(weekly_forecast.columns)
+    if missing:
+        raise ValueError(f"weekly_forecast is missing {sorted(missing)}")
+
+    daily = clean_daily.copy()
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily["week"] = daily["date"].dt.to_period("W-SUN").dt.start_time
+
+    wf = weekly_forecast.rename(columns={"date": "week",
+                                         "forecast_tonnes": "week_forecast"})
+    wf["week"] = pd.to_datetime(wf["week"])
+
+    daily = daily[daily.week.isin(wf.week.unique())].merge(
+        wf[["site_id", "week", "week_forecast"]], on=["site_id", "week"], how="inner")
+
+    week_plan = daily.groupby(["site_id", "week"]).planned_pour_tonnes.transform("sum")
+    daily["day_forecast"] = daily.week_forecast * np.where(
+        week_plan > 0, daily.planned_pour_tonnes / week_plan, 1 / 7)
+
+    return daily.sort_values(["site_id", "date"]).reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
 # simulation
 # --------------------------------------------------------------------------- #
 def simulate(daily: pd.DataFrame,
