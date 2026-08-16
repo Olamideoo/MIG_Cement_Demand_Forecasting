@@ -12,3 +12,6 @@ openpyxl
 pydantic
 pydantic-settings
 python-dotenv
+fastapi
+uvicorn
+gunicorn
