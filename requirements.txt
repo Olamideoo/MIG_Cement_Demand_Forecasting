@@ -1,13 +1,29 @@
 numpy
 pandas
-matplotlib
-seaborn
-plotly
-dash
+pyarrow          # parquet
 scikit-learn
-statsmodels
+statsmodels      # SARIMAX baseline
+joblib           # model persistence
+
+# --- config ---
+pydantic
+pydantic-settings
+python-dotenv
+
+# --- api ---
+fastapi
+uvicorn[standard]
+httpx            # TestClient
+
+# --- dashboard ---
+streamlit
+plotly
+
+# --- notebooks ---
 jupyter
 ipykernel
+matplotlib
+seaborn
 openpyxl
 pydantic
 pydantic-settings

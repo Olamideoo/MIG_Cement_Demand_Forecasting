@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     db_path: Path = REPO_ROOT / "DATA" / "raw" / "MIG_Cement_Records.db"
     interim_dir: Path = REPO_ROOT / "DATA" / "interim"
     processed_dir: Path = REPO_ROOT / "DATA" / "processed"
+    models_dir: Path = REPO_ROOT / "MODELS"
 
     # --- mlflow ---
     mlflow_tracking_uri: str = f"file://{REPO_ROOT / 'mlruns'}"
