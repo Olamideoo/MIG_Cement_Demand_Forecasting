@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 import streamlit as st
+import theme
 
 import data as dat
-import theme
 
 
 def render() -> None:
@@ -58,7 +58,6 @@ def render() -> None:
                            "order soon" if severity == "amber" else "no action",
                            status)
 
-    pour = proj[proj.pour_met.notna()]
     missed = int((~proj.pour_met).sum())
     if missed:
         st.warning(f"{missed} day(s) where demand exceeded available stock. "

@@ -1,4 +1,4 @@
-.PHONY: setup lint format clean-data pipeline features train api dashboard up down deploy
+.PHONY: setup lint format clean-data pipeline features api dashboard up down deploy
 
 setup:            ## create venv, install deps, install package editable
 	python -m venv .venv
@@ -27,10 +27,7 @@ pipeline:         ## full run: SQLite -> clean -> features -> train -> save mode
 pipeline-dry:     ## same, but score without writing artefacts
 	python -m mig_cement.pipeline --dry-run
 
-train:            ## train + log to MLflow (MODEL=lightgbm)
-	python -m mig_cement.models.train --model $(or $(MODEL),lightgbm)
-
-api:
+api:              ## run the FastAPI service
 	uvicorn mig_cement.api.main:app --reload --port 8000
 
 dashboard:        ## run the Streamlit operations dashboard

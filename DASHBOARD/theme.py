@@ -116,7 +116,7 @@ def style_alerts_table(df, severity_col: str = "severity"):
         colour, background, _ = STATUS[key]
         base = f"background-color:{background};"
         return [base + (f"color:{colour};font-weight:700"
-                        if c == severity_col else f"color:#1f2328")
+                        if c == severity_col else "color:#1f2328")
                 for c in row.index]
 
     return df.style.apply(colour_row, axis=1)

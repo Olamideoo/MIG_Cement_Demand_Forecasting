@@ -1,0 +1,31 @@
+# Line-ending policy.
+#
+# The repo is worked on from Windows and Linux. Without this file a Windows
+# checkout rewrites LF to CRLF, and every file then shows as fully modified:
+# docker-compose.yml alone produced 78 changed lines for zero content change.
+# That makes diffs unreviewable and causes conflicts on files nobody edited.
+#
+# `text=auto eol=lf` means: git decides what is text, stores it with LF in the
+# repository, and checks it out with LF everywhere. Editors on Windows handle
+# LF fine; the CRLF round-trip is what caused the churn.
+* text=auto eol=lf
+
+# Binaries - never touched, never diffed as text.
+*.db     binary
+*.joblib binary
+*.parquet binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.pdf    binary
+*.xlsx   binary
+*.docx   binary
+*.zip    binary
+
+# Notebooks are JSON, so they are text, but a line-by-line diff of one is
+# noise. Mark them so `git diff` says "binary" rather than printing 4,000 lines.
+*.ipynb  -diff
+
+# Scripts that must keep LF even if someone forces CRLF elsewhere.
+Makefile text eol=lf
+*.sh     text eol=lf

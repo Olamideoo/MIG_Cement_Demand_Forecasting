@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import theme
 
 import data as dat
-import theme
 
 SEVERITY_ICON = {"red": "🔴 ORDER NOW", "amber": "🟠 Order soon", "green": "🟢 OK"}
 
@@ -33,7 +33,7 @@ def render() -> None:
 
     counts = view.severity.value_counts()
     c1, c2, c3 = st.columns(3)
-    for col, sev in zip((c1, c2, c3), ("red", "amber", "green")):
+    for col, sev in zip((c1, c2, c3), ("red", "amber", "green"), strict=True):
         with col:
             theme.kpi_card(theme.SEVERITY_LABEL[sev], str(int(counts.get(sev, 0))),
                            "sites", theme.SEVERITY_STATUS[sev])

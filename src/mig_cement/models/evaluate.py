@@ -73,8 +73,3 @@ def time_split(df: pd.DataFrame, train_end: str, val_end: str,
         "val": df[(d > train_end) & (d <= val_end)],
         "test": df[d > val_end],
     }
-
-
-def rolling_origin_backtest(panel: pd.DataFrame, model, horizon_weeks: int = 8):
-    """Expanding-window backtest with `horizon_weeks` ahead forecasts."""
-    raise NotImplementedError
