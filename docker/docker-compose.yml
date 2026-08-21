@@ -3,11 +3,6 @@
 #   docker compose -f docker/docker-compose.yml up --build       api + dashboard
 #   docker compose -f docker/docker-compose.yml run --rm model   retrain
 #   docker compose -f docker/docker-compose.yml --profile tools up mlflow
-#
-# The model service is a job, not a server: it trains, writes its artefacts to
-# the mounted MODELS/ and DATA/processed/, and exits. It is in the `train`
-# profile so a plain `up` does not start it. The MLflow UI is in a `tools`
-# profile for the same reason - useful on demand, not part of the running stack.
 
 name: mig-cement
 
@@ -19,28 +14,14 @@ services:
       context: ..
       dockerfile: docker/model.Dockerfile
     volumes:
-      # Output must leave the container or the artefact dies with the process.
       - ../MODELS:/app/MODELS
       - ../DATA/processed:/app/DATA/processed
-      # No mlruns mount: runs go over HTTP to the tracking server, which owns
-      # the database and the artefact tree. Mounting it here as well would give
-      # two writers to one SQLite file for no benefit.
     environment:
       DB_PATH: /app/DATA/raw/MIG_Cement_Records.db
-      # The compose service name, on the internal network. localhost would be
-      # this container. Because the server holds the artefact store, nothing
-      # here depends on host paths - which is what makes container and host
-      # runs land in the same experiment.
       MLFLOW_TRACKING_URI: http://mlflow:5000
-      # There is no git binary in the image, so MLflow's automatic source
-      # tagging prints three paragraphs of warning on every run. The pipeline
-      # tags git_commit itself, from the host, where a repository actually
-      # exists - so nothing is lost by quietening this.
       GIT_PYTHON_REFRESH: quiet
     depends_on:
       mlflow:
-        # Training takes minutes; discovering at the end that the server was not
-        # up yet would waste all of it.
         condition: service_healthy
 
   # --- forecasting API ---------------------------------------------------- #
@@ -51,8 +32,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Shadows the copy baked into the image, so a local retrain is live on the
-      # next restart with no rebuild. Read-only: the API must never write here.
       - ../MODELS:/app/MODELS:ro
       - ../DATA/processed:/app/DATA/processed:ro
     environment:
@@ -60,23 +39,8 @@ services:
     restart: unless-stopped
 
   # --- MLflow tracking server ---------------------------------------------- #
-  # A server rather than a bare UI, and that distinction is load-bearing.
-  #
-  # With a file-based artefact store, the artefact directory's absolute path is
-  # written into the experiment when it is created. That path is
-  # C:\...\mlruns\artifacts on the host and /app/mlruns/artifacts in a
-  # container, and one experiment cannot hold both - whichever environment did
-  # not create it gets a PermissionError trying to write artefacts. MLflow
-  # resolves relative paths to absolute at creation time, so that is no escape
-  # either.
-  #
-  # Running a server removes the problem instead of working around it: clients
-  # talk HTTP and never touch the artefact directory, and --serve-artifacts
-  # makes the server proxy uploads to storage only it can see. It is also the
-  # shape this takes on AWS, where the store would be S3.
+ 
   mlflow:
-    # Not in a profile: unlike the UI it replaced, the training job now depends
-    # on this, so it has to come up with a plain `up`.
     build:
       context: ..
       dockerfile: docker/model.Dockerfile
@@ -85,8 +49,6 @@ services:
       - server
       - --backend-store-uri
       - sqlite:////app/mlruns/mlflow.db
-      # Where the server itself keeps artefacts. Only this container resolves
-      # this path; clients address artefacts through mlflow-artifacts:/ URIs.
       - --artifacts-destination
       - /app/mlruns/artifacts
       - --serve-artifacts
@@ -94,29 +56,19 @@ services:
       - "0.0.0.0"          # bind all interfaces, or the published port reaches nothing
       - --port
       - "5000"
-      # MLflow 3 rejects Host headers it does not recognise, to blunt DNS
-      # rebinding attacks. The default allows localhost and private IPs, so a
-      # browser on the host is fine but the model container - which connects as
-      # "mlflow:5000", the compose service name - gets a flat 403 and its run
-      # goes unrecorded. Naming the service host here is what lets container
-      # runs reach the server at all.
+
       - --allowed-hosts
       - mlflow:5000,localhost:5000,127.0.0.1:5000
-      # Windows cannot share a listening socket with spawned workers, which
-      # surfaces as WinError 10022 and a worker crash loop. One worker is ample
-      # for a single-user tracking server and sidesteps it entirely.
+      
       - --workers
       - "1"
     ports:
       - "5000:5000"
     volumes:
-      # Read-write: the server owns both the database and the artefact tree.
       - ../mlruns:/app/mlruns
     environment:
       GIT_PYTHON_REFRESH: quiet
     healthcheck:
-      # The model job waits on this. /health is served once the store is open,
-      # so passing it genuinely means a client can log.
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status==200 else 1)"]
       interval: 10s
@@ -133,16 +85,8 @@ services:
     ports:
       - "8501:8501"
     environment:
-      # `api` is the compose service name, resolved on the internal network.
-      # localhost would point at the dashboard container itself.
-      #
-      # Passed as a real environment variable, which takes precedence over any
-      # .env baked into the image - the client reads .env only as a fallback.
       API_BASE_URL: http://api:8000
     depends_on:
       api:
-        # Not just "started". The API spends several seconds loading the model
-        # and building the panel; the dashboard calls /health on startup and
-        # would stop with "API unreachable" if it raced ahead.
         condition: service_healthy
     restart: unless-stopped

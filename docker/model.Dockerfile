@@ -9,14 +9,6 @@
 #   MODELS/rf_demand_forecaster_meta.json     features, cutoff, metrics, versions
 #   DATA/processed/test_forecasts.parquet     hold-out forecasts + actuals
 #   mlruns/                                   the MLflow record of the run
-#
-# Those must land on a mounted volume, not inside the container, or the artefact
-# dies with the process. compose mounts ../MODELS and ../DATA/processed for
-# exactly this reason.
-#
-# The API image bakes a copy of MODELS/ so it can deploy to ECS as one unit; the
-# local mount shadows that copy, so retraining here is picked up on the next API
-# restart without rebuilding anything.
 
 FROM python:3.11-slim AS builder
 WORKDIR /build
