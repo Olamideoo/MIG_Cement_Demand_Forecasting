@@ -1,9 +1,13 @@
 """Data access for the dashboard.
 
 Everything the UI needs comes through here, so the views never touch the model,
-the database or the simulator directly. That keeps one seam: to move to the
-FastAPI service later, reimplement these functions as HTTP calls and change
-nothing else.
+the database or the simulator directly. That single seam is what let the
+operational loaders move onto the FastAPI service without any view changing.
+
+Set API_BASE_URL and the forecast, alerts, summary and site list come over HTTP;
+leave it unset and they are computed locally from the saved model. The analytical
+loaders (the baseline page, the daily simulation, the 33k-row panels) always read
+locally - they are the wrong shape to push through JSON.
 
 All loaders are cached. The simulation takes a few seconds and must not re-run on
 every widget interaction.
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import json
 
+import api_client
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -23,6 +28,14 @@ from mig_cement.features.build import build_weekly_panel
 from mig_cement.inventory import simulate as inv
 
 CACHE_TTL = 3600
+
+# Four loaders can be served over HTTP; the rest read locally. The split is not
+# arbitrary - the operational numbers (what to order, for which site, this week)
+# are what the API exists to serve, while the analytical pages need 33k-row
+# panels that would be far slower as JSON than as a local parquet read.
+#
+# `api_client.in_api_mode()` is driven by API_BASE_URL. Unset means local, which
+# is how the notebooks and a bare `streamlit run` still work.
 
 
 # --------------------------------------------------------------------------- #
@@ -63,11 +76,22 @@ def get_weekly_panel() -> pd.DataFrame:
 
 @st.cache_data(ttl=CACHE_TTL)
 def get_forecasts() -> pd.DataFrame:
-    """Hold-out forecasts written by the training pipeline."""
-    path = settings.processed_dir / "test_forecasts.parquet"
-    if not path.exists():
-        return pd.DataFrame()
-    fc = pd.read_parquet(path)
+    """Weekly forecasts, with the actuals needed to score them.
+
+    From the API when one is configured, otherwise the parquet the pipeline
+    wrote. Both carry `forecast_tonnes` and `actual_tonnes`, so the performance
+    page works either way.
+    """
+    if api_client.in_api_mode():
+        fc = api_client.fetch_forecasts()
+    else:
+        path = settings.processed_dir / "test_forecasts.parquet"
+        if not path.exists():
+            return pd.DataFrame()
+        fc = pd.read_parquet(path)
+
+    if fc.empty:
+        return fc
     fc["date"] = pd.to_datetime(fc["date"])
     fc["abs_error"] = (fc.actual_tonnes - fc.forecast_tonnes).abs()
     fc["pct_error"] = np.where(fc.actual_tonnes != 0,
@@ -103,15 +127,26 @@ def get_simulation() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def _inventory() -> tuple[pd.DataFrame, pd.Series]:
+    """Alerts and summary together - they come from one simulation run.
+
+    Fetching them separately would run the simulation twice and let the two
+    halves disagree.
+    """
+    if api_client.in_api_mode():
+        return api_client.fetch_inventory()
+    sim = get_simulation()
+    if sim.empty:
+        return pd.DataFrame(), pd.Series(dtype=float)
+    return inv.reorder_alerts(sim), inv.summarise(sim)
+
+
 def get_alerts() -> pd.DataFrame:
-    sim = get_simulation()
-    return inv.reorder_alerts(sim) if not sim.empty else pd.DataFrame()
+    return _inventory()[0]
 
 
-@st.cache_data(ttl=CACHE_TTL)
 def get_policy_summary() -> pd.Series:
-    sim = get_simulation()
-    return inv.summarise(sim) if not sim.empty else pd.Series(dtype=float)
+    return _inventory()[1]
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -216,6 +251,10 @@ def get_schedule_bias() -> dict:
 # helpers
 # --------------------------------------------------------------------------- #
 def get_sites() -> list[str]:
+    if api_client.in_api_mode():
+        fc = get_forecasts()
+        if not fc.empty:
+            return sorted(fc.site_id.unique())
     return sorted(get_weekly_panel().site_id.unique())
 
 
@@ -225,6 +264,19 @@ def get_regions() -> list[str]:
 
 def artefacts_present() -> tuple[bool, str]:
     """Guard so the app explains itself rather than raising a stack trace."""
+    if api_client.in_api_mode():
+        # In API mode the model lives in the api container, not here. Health is
+        # the API's business; this only checks that it answered.
+        try:
+            body = api_client.health()
+        except api_client.ApiUnavailable as exc:
+            return False, str(exc)
+        if not body.get("model_loaded"):
+            return False, ("The API is up but reports no model loaded "
+                           f"(status: {body.get('status')}). Run "
+                           "`python -m mig_cement.pipeline` where the API can see it.")
+        return True, ""
+
     if get_model() is None:
         return False, ("Model artefact not found. Run `make pipeline` "
                        "(or `python -m mig_cement.pipeline`) to train and save it.")
