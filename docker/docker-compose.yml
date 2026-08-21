@@ -1,39 +1,62 @@
-services:
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
-    command: >
-      mlflow server --host 0.0.0.0 --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
-    volumes:
-      - mlflow_data:/mlflow
-    ports:
-      - "5000:5000"
+# Local stack.
+#
+#   docker compose -f docker/docker-compose.yml up --build      api + dashboard
+#   docker compose -f docker/docker-compose.yml run --rm model  retrain
+#
+# The model service is a job, not a server: it trains, writes its artefacts to
+# the mounted MODELS/ and DATA/processed/, and exits. It is in the `train`
+# profile so a plain `up` does not start it.
 
+name: mig-cement
+
+services:
+  # --- training job ------------------------------------------------------- #
+  model:
+    profiles: ["train"]
+    build:
+      context: ..
+      dockerfile: docker/model.Dockerfile
+    volumes:
+      # Output must leave the container or the artefact dies with the process.
+      - ../MODELS:/app/MODELS
+      - ../DATA/processed:/app/DATA/processed
+    environment:
+      DB_PATH: /app/DATA/raw/MIG_Cement_Records.db
+
+  # --- forecasting API ---------------------------------------------------- #
   api:
     build:
       context: ..
       dockerfile: docker/api.Dockerfile
-    environment:
-      MLFLOW_TRACKING_URI: http://mlflow:5000
-      DB_PATH: /data/MIG_Cement_Records.db
-    volumes:
-      - ../DATA/raw:/data:ro
     ports:
       - "8000:8000"
-    depends_on:
-      - mlflow
+    volumes:
+      # Shadows the copy baked into the image, so a local retrain is live on the
+      # next restart with no rebuild. Read-only: the API must never write here.
+      - ../MODELS:/app/MODELS:ro
+      - ../DATA/processed:/app/DATA/processed:ro
+    environment:
+      DB_PATH: /app/DATA/raw/MIG_Cement_Records.db
+    restart: unless-stopped
 
+  # --- Streamlit dashboard ------------------------------------------------ #
   dashboard:
     build:
       context: ..
       dockerfile: docker/dashboard.Dockerfile
-    environment:
-      API_BASE_URL: http://api:8000
     ports:
-      - "8050:8050"
+      - "8501:8501"
+    environment:
+      # `api` is the compose service name, resolved on the internal network.
+      # localhost would point at the dashboard container itself.
+      #
+      # Passed as a real environment variable, which takes precedence over any
+      # .env baked into the image - the client reads .env only as a fallback.
+      API_BASE_URL: http://api:8000
     depends_on:
-      - api
-
-volumes:
-  mlflow_data:
+      api:
+        # Not just "started". The API spends several seconds loading the model
+        # and building the panel; the dashboard calls /health on startup and
+        # would stop with "API unreachable" if it raced ahead.
+        condition: service_healthy
+    restart: unless-stopped
