@@ -170,6 +170,39 @@ def test_forecast_shape_and_ordering(client):
 
 
 @needs_model
+def test_forecast_carries_actuals_where_the_week_has_happened(client):
+    """The servable window sits after the training cutoff but inside the recorded
+    data, so these weeks have already occurred and the truth is known.
+
+    Returning it lets a client score the forecast without a second data source -
+    which is what the dashboard's performance page relies on.
+    """
+    body = client.post("/forecast", json={"horizon_weeks": 8}).json()
+    points = [p for s in body["sites"] for p in s["forecast"]]
+
+    observed = [p for p in points if p["actual_tonnes"] is not None]
+    assert len(observed) == len(points) == 240
+    assert all(p["actual_tonnes"] >= 0 for p in observed)
+
+
+@needs_model
+def test_actuals_in_the_response_reproduce_the_holdout_mape(client):
+    """Guards the field's meaning, not just its presence.
+
+    A plausible-looking column that is subtly the wrong series would still pass a
+    not-null check. Scoring it against the model card catches that.
+    """
+    body = client.post("/forecast", json={"horizon_weeks": 8}).json()
+    points = [p for s in body["sites"] for p in s["forecast"]]
+    df = pd.DataFrame([p for p in points if p["actual_tonnes"]])
+
+    mape = float(np.mean(np.abs(
+        (df.actual_tonnes - df.predicted_tonnes) / df.actual_tonnes)))
+    expected = forecaster.metadata["holdout_metrics"]["MAPE"]
+    assert abs(mape - expected) < 0.001, f"{mape:.4f} vs model card {expected}"
+
+
+@needs_model
 def test_forecast_dates_are_weekly_and_ascending(client):
     body = client.post("/forecast",
                        json={"site_id": "SITE_001", "horizon_weeks": 8}).json()
@@ -194,6 +227,148 @@ def test_unknown_site_is_a_404_not_a_500(client):
     assert r.status_code in (404, 503)
     if r.status_code == 404:
         assert "SITE_999" in r.json()["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# predict - single site-week, with an optional what-if on the pour
+# --------------------------------------------------------------------------- #
+@needs_model
+def test_predict_scores_a_week_as_it_stands(client):
+    body = client.post("/predict",
+                       json={"site_id": "SITE_001", "week": "2024-10-07"}).json()
+    assert body["site_id"] == "SITE_001"
+    assert body["week"] == "2024-10-07"
+    assert body["lower"] <= body["predicted_tonnes"] <= body["upper"]
+    assert body["baseline_tonnes"] is None       # nothing was overridden
+    assert body["in_training_range"] is True
+    assert body["warning"] is None
+
+
+@needs_model
+def test_predict_with_no_week_uses_the_first_servable_one(client):
+    """The dashboard and curl users should not have to know the cutoff date."""
+    body = client.post("/predict", json={"site_id": "SITE_001"}).json()
+    cutoff = pd.Timestamp(forecaster.metadata["trained_on"]["to"])
+    assert pd.Timestamp(body["week"]) > cutoff
+
+
+@needs_model
+def test_predict_matches_forecast_for_the_same_week(client):
+    """Two endpoints, one model - they must not disagree about the same row."""
+    p = client.post("/predict",
+                    json={"site_id": "SITE_001", "week": "2024-10-07"}).json()
+    f = client.post("/forecast",
+                    json={"site_id": "SITE_001", "horizon_weeks": 1}).json()
+    point = f["sites"][0]["forecast"][0]
+
+    assert point["date"] == p["week"]
+    assert abs(point["predicted_tonnes"] - p["predicted_tonnes"]) < 0.01
+
+
+@needs_model
+def test_an_override_moves_the_prediction_and_reports_the_baseline(client):
+    """Inside the training range the model responds to the pour, and the caller
+    can see the size of the effect without making a second request."""
+    body = client.post("/predict", json={"site_id": "SITE_001",
+                                         "week": "2024-10-07",
+                                         "planned_pour_tonnes": 350}).json()
+    assert body["planned_pour_tonnes"] == 350
+    assert body["baseline_tonnes"] is not None
+    assert body["predicted_tonnes"] != body["baseline_tonnes"]
+    assert body["in_training_range"] is True
+
+
+@needs_model
+def test_an_override_beyond_the_training_range_is_flagged(client):
+    """The important one.
+
+    A random forest averages training leaves, so past the largest pour ever
+    recorded the prediction stops moving. Left unflagged it would return a
+    confident number for an input it cannot answer, so the response must say so.
+    """
+    body = client.post("/predict", json={"site_id": "SITE_001",
+                                         "week": "2024-10-07",
+                                         "planned_pour_tonnes": 900}).json()
+    assert body["in_training_range"] is False
+    assert body["warning"] and "never poured more than" in body["warning"]
+
+
+@needs_model
+def test_the_range_check_is_per_site_not_per_estate(client):
+    """The bug this replaced.
+
+    SITE_009 has never poured above 118 t while the estate maximum is 403 t. An
+    estate-wide check waves 300 t through as in-range, which is exactly the
+    plausible-looking answer the flag exists to challenge.
+    """
+    body = client.post("/predict", json={"site_id": "SITE_009",
+                                         "week": "2024-10-07",
+                                         "planned_pour_tonnes": 300}).json()
+    site_max = body["site_pour_range"][1]
+    estate_max = float(forecaster._panel.planned_pour_tonnes.max())
+
+    assert site_max < 300 < estate_max          # the case that used to slip past
+    assert body["in_training_range"] is False
+    assert "SITE_009" in body["warning"]
+
+
+@needs_model
+def test_the_site_range_is_reported_and_brackets_the_real_pour(client):
+    body = client.post("/predict",
+                       json={"site_id": "SITE_009", "week": "2024-10-07"}).json()
+    lo, hi = body["site_pour_range"]
+    assert lo <= body["planned_pour_tonnes"] <= hi
+
+
+@needs_model
+def test_an_interval_is_returned_only_without_an_override(client):
+    """Sigma measures error against the real schedule. Wrapping a hypothetical in
+    that band would claim a precision nobody has measured, so it is withheld."""
+    real = client.post("/predict",
+                       json={"site_id": "SITE_001", "week": "2024-10-07"}).json()
+    assert real["lower"] is not None and real["upper"] is not None
+    assert real["lower"] <= real["predicted_tonnes"] <= real["upper"]
+
+    whatif = client.post("/predict", json={"site_id": "SITE_001",
+                                           "week": "2024-10-07",
+                                           "planned_pour_tonnes": 350}).json()
+    assert whatif["lower"] is None and whatif["upper"] is None
+
+
+@needs_model
+def test_predictions_saturate_beyond_the_training_range(client):
+    """Demonstrates why the flag exists: ten times the pour, same answer.
+
+    If a future model could extrapolate this would fail, which is the right
+    outcome - the warning would then be wrong and should be revisited.
+    """
+    trained_max = float(forecaster._panel.planned_pour_tonnes.max())
+    big = client.post("/predict", json={"site_id": "SITE_001",
+                                        "week": "2024-10-07",
+                                        "planned_pour_tonnes": trained_max * 2}).json()
+    huge = client.post("/predict", json={"site_id": "SITE_001",
+                                         "week": "2024-10-07",
+                                         "planned_pour_tonnes": trained_max * 10}).json()
+    assert big["predicted_tonnes"] == huge["predicted_tonnes"]
+
+
+@needs_model
+def test_predict_rejects_a_week_outside_the_servable_window(client):
+    """The message names the range rather than just refusing."""
+    r = client.post("/predict", json={"site_id": "SITE_001", "week": "2019-01-07"})
+    assert r.status_code == 404
+    assert "Available" in r.json()["detail"]
+
+
+def test_predict_rejects_a_negative_pour(client):
+    assert client.post("/predict", json={"site_id": "SITE_001",
+                                         "planned_pour_tonnes": -5}
+                       ).status_code == 422
+
+
+def test_predict_unknown_site_is_a_404(client):
+    r = client.post("/predict", json={"site_id": "SITE_999"})
+    assert r.status_code in (404, 503)
 
 
 # --------------------------------------------------------------------------- #
@@ -305,13 +480,13 @@ def test_served_features_match_the_trained_features(client):
 # --------------------------------------------------------------------------- #
 # documentation
 # --------------------------------------------------------------------------- #
-def test_openapi_exposes_exactly_the_three_endpoints(client):
+def test_openapi_exposes_exactly_the_expected_endpoints(client):
     paths = client.get("/openapi.json").json()["paths"]
-    assert set(paths) == {"/health", "/forecast", "/inventory"}
+    assert set(paths) == {"/health", "/forecast", "/predict", "/inventory"}
 
 
 @needs_model
-@pytest.mark.parametrize("endpoint", ["/forecast", "/inventory"])
+@pytest.mark.parametrize("endpoint", ["/forecast", "/predict", "/inventory"])
 def test_every_documented_example_actually_works(client, endpoint):
     """Swagger prefills its request box from these. An example that 422s is
     worse than none, because it teaches the reader the wrong shape."""
