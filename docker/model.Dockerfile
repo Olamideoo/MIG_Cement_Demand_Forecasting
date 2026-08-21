@@ -8,6 +8,7 @@
 #   MODELS/rf_demand_forecaster.joblib        the model the API serves
 #   MODELS/rf_demand_forecaster_meta.json     features, cutoff, metrics, versions
 #   DATA/processed/test_forecasts.parquet     hold-out forecasts + actuals
+#   mlruns/                                   the MLflow record of the run
 #
 # Those must land on a mounted volume, not inside the container, or the artefact
 # dies with the process. compose mounts ../MODELS and ../DATA/processed for
@@ -37,7 +38,7 @@ COPY DATA/raw/ ./DATA/raw/
 
 # Written to at runtime, so they must exist and be writable by appuser before
 # the switch below - a mount will cover them, but an unmounted run still works.
-RUN mkdir -p MODELS DATA/processed DATA/interim && chown -R appuser:appuser /app
+RUN mkdir -p MODELS DATA/processed DATA/interim mlruns && chown -R appuser:appuser /app
 
 USER appuser
 

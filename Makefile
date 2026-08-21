@@ -1,4 +1,4 @@
-.PHONY: setup lint format clean-data pipeline features test api dashboard up down retrain deploy
+.PHONY: setup lint format clean-data pipeline features test api dashboard mlflow up down retrain deploy
 
 setup:            ## create venv, install deps, install package editable
 	python -m venv .venv
@@ -33,6 +33,11 @@ dashboard:        ## run the Streamlit operations dashboard
 
 test:             ## API contract tests
 	pytest tests/ -q
+
+mlflow:           ## tracking server + UI at http://localhost:5000
+	mlflow server --backend-store-uri sqlite:///mlruns/mlflow.db \
+	              --artifacts-destination mlruns/artifacts --serve-artifacts \
+	              --host 127.0.0.1 --port 5000 --workers 1
 
 up:               ## build and start api + dashboard
 	docker compose -f docker/docker-compose.yml up --build

@@ -14,6 +14,14 @@ pydantic
 pydantic-settings
 python-dotenv           # reads .env for API_BASE_URL
 
+# --- experiment tracking ---
+# Only the training job imports this; the API and dashboard never do. It is here
+# rather than in a separate training requirements file because all three images
+# install from this one file, and splitting it would touch all three Dockerfiles.
+# If image size becomes a concern on ECS, that split is the fix - mlflow pulls in
+# Flask, SQLAlchemy and Alembic, none of which serving needs.
+mlflow
+
 # --- api ---
 fastapi
 uvicorn[standard]
