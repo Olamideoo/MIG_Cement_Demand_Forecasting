@@ -1,8 +1,9 @@
 """FastAPI application. Run: uvicorn mig_cement.api.main:app --reload
 
-Two business endpoints, matching the two things the project produces:
+Three business endpoints:
 
     POST /forecast    the RF demand forecaster - 8 weekly forecasts per site
+    POST /predict     score one site-week, optionally with the pour changed
     POST /inventory   the (s, S) simulation built on those forecasts
 
 plus one infrastructure endpoint:
@@ -161,10 +162,74 @@ def forecast(
         sites=[
             schemas.SiteForecast(
                 site_id=site,
+                # `where(notna)` turns NaN into None. JSON has no NaN, and pydantic
+                # would otherwise coerce it to a float the client cannot test for.
                 forecast=[schemas.ForecastPoint(**p) for p in
-                          g.drop(columns=["site_id"]).to_dict(orient="records")])
+                          g.drop(columns=["site_id"])
+                           .astype(object).where(g.drop(columns=["site_id"]).notna(), None)
+                           .to_dict(orient="records")])
             for site, g in rows.groupby("site_id")
         ],
+    )
+
+
+PREDICT_EXAMPLES = {
+    "as_scheduled": {
+        "summary": "Score a week as it stands",
+        "description": "No override - what the model expects given the real pour.",
+        "value": {"site_id": "SITE_001", "week": "2024-10-07"},
+    },
+    "bigger_pour": {
+        "summary": "What if the pour were larger?",
+        "description": "Returns baseline_tonnes alongside, so the effect is visible.",
+        "value": {"site_id": "SITE_001", "week": "2024-10-07",
+                  "planned_pour_tonnes": 350},
+    },
+    "beyond_this_site": {
+        "summary": "More than this site has ever poured",
+        "description": "SITE_009's largest recorded pour is 118 t. Asking for 300 "
+                       "returns a number, but with in_training_range false - the "
+                       "model has no example of this site at that scale.",
+        "value": {"site_id": "SITE_009", "week": "2024-10-07",
+                  "planned_pour_tonnes": 300},
+    },
+    "beyond_every_site": {
+        "summary": "Beyond anything in the data at all",
+        "description": "Past the estate maximum the prediction stops moving "
+                       "entirely - a random forest cannot extrapolate.",
+        "value": {"site_id": "SITE_001", "week": "2024-10-07",
+                  "planned_pour_tonnes": 900},
+    },
+}
+
+
+@app.post("/predict", response_model=schemas.PredictResponse)
+def predict(
+    req: Annotated[schemas.PredictRequest,
+                   Body(openapi_examples=PREDICT_EXAMPLES)],
+) -> schemas.PredictResponse:
+    """Score a single site-week, with an optional change to the pour schedule.
+
+    `/forecast` answers "what will these sites need"; this answers "what would
+    happen if next week's pour were different". Only the pour is settable - the
+    rest of the feature row is read from real data, so the model cannot be handed
+    a combination that could never occur.
+    """
+    _guard()
+    try:
+        result = forecaster.predict_one(
+            req.site_id,
+            week=req.week,
+            planned_pour_tonnes=req.planned_pour_tonnes)
+    except KeyError:
+        raise HTTPException(404, f"unknown site: {req.site_id}") from None
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+    return schemas.PredictResponse(
+        **result,
+        model_version=forecaster.model_version,
+        generated_at=datetime.now(timezone.utc),
     )
 
 
