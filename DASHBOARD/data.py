@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import json
 
-import api_client
 import numpy as np
 import pandas as pd
 import streamlit as st
 
+import api_client
 from mig_cement.config import settings
 from mig_cement.data import load, preprocess
 from mig_cement.features.build import build_weekly_panel

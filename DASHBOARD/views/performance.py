@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-import theme
 
 import data as dat
+import theme
 
 TARGET_MAPE = 0.15
 

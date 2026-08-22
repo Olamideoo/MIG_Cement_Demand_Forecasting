@@ -20,9 +20,8 @@ st.set_page_config(page_title="MIG Cement Demand Forecasting",
                    page_icon="🏗️", layout="wide")
 
 import api_client  # noqa: E402
-from views import baseline, inventory, overview, performance, site_detail  # noqa: E402
-
 import data as dat  # noqa: E402
+from views import baseline, inventory, overview, performance, site_detail  # noqa: E402
 
 PAGES = {
     "Overview": overview.render,
