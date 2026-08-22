@@ -1,12 +1,4 @@
-"""Cleaning and repair — Brief Step 1.
-
-Grain is site-day: 30 sites x 1,096 consecutive days = 32,880 rows, no gaps, one
-cement_type per site-day. The silo ledger runs per site (opening_t == closing_{t-1}
-holds on 100% of rows at site grain, 42.7% at site-type grain).
-
-Main defect: the source never caps deliveries at silo capacity, so 34.8% of rows
-close above it.
-"""
+# Cleaning and repair 
 
 from __future__ import annotations
 

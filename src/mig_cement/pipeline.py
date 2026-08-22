@@ -67,9 +67,6 @@ def score(y_true, y_pred) -> dict[str, float]:
 
 
 def run(db_path: Path | None = None, save: bool = True, track: bool = True) -> dict:
-    # A dry run is deliberately not tracked. It writes no artefact, so a logged
-    # run pointing at a model that was never saved would be a trap for whoever
-    # reads the history later.
     started = datetime.now(timezone.utc)
     run_name = f"rf{N_ESTIMATORS}-{started:%Y%m%d-%H%M%S}"
 
@@ -89,9 +86,6 @@ def run(db_path: Path | None = None, save: bool = True, track: bool = True) -> d
         test = weekly[d > VAL_END].groupby("site_id").head(HORIZON_WEEKS)
         print(f"split: train {len(train):,} | val {len(val)} | test {len(test)}")
 
-        # Logged before the fit, not after. A run that crashes during training
-        # still leaves a record of what was attempted, which is exactly when
-        # knowing the configuration matters most.
         mlrun.log_params({
             "estimator": "RandomForestRegressor",
             "n_estimators": N_ESTIMATORS,
@@ -137,9 +131,7 @@ def run(db_path: Path | None = None, save: bool = True, track: bool = True) -> d
               f"RMSE {test_metrics['RMSE']:.2f} t  bias {test_metrics['bias']:+.2f} t  "
               f"target <= 15% {'PASS' if met else 'FAIL'}")
 
-        # Both sets, prefixed. Keeping validation alongside hold-out is what
-        # makes overfitting visible in the run table: a widening gap between
-        # val_MAPE and test_MAPE across runs says more than either alone.
+    
         mlrun.log_metrics({
             **{f"val_{k}": v for k, v in val_metrics.items()},
             **{f"test_{k}": v for k, v in test_metrics.items()},
@@ -194,9 +186,6 @@ def run(db_path: Path | None = None, save: bool = True, track: bool = True) -> d
               f"metadata, {len(forecasts)} forecasts | reload verified ({diff:.0e})")
 
         # 6. log the run ------------------------------------------------------
-        # The model goes in with a signature inferred from the real training
-        # columns and the real predictions, so a future load with the wrong
-        # feature order fails at load rather than silently returning nonsense.
         mlrun.log_metrics({
             "model_size_mb": model_path.stat().st_size / 1e6,
             "reload_max_abs_diff": diff,

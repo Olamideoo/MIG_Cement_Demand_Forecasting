@@ -3,20 +3,6 @@
 `data.py` is the seam the views read through; this module is what that seam calls
 when the dashboard is pointed at a running API instead of loading the model
 itself. Nothing here knows about Streamlit, and nothing here draws anything.
-
-Mode is explicit, never guessed:
-
-    API_BASE_URL set    -> the dashboard calls the API
-    API_BASE_URL unset  -> the dashboard loads the model directly, as before
-
-There is deliberately no silent fallback from the first to the second. A
-fallback looks friendly and hides failure twice: locally a broken API would
-render as a working dashboard, and in Docker the dashboard container has no
-model at all, so falling back would swap a clear "API unreachable" for a
-confusing FileNotFoundError about a file that was never meant to be there.
-
-Every function returns exactly the frame shape `data.py` returns in local mode,
-including column names, so the views cannot tell the two apart.
 """
 
 from __future__ import annotations
@@ -29,24 +15,12 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-# Read .env at the repo root so the mode does not have to be set by hand in
-# every terminal. The path is explicit rather than cwd-relative because
-# `streamlit run` can be invoked from anywhere.
-#
-# load_dotenv does not overwrite variables that are already set, which is the
-# behaviour we want: docker compose passes API_BASE_URL directly, and that must
-# win over whatever a stray .env inside the image might say.
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "").rstrip("/")
-
-# Generous, because /forecast runs the model for 30 sites and /inventory runs a
-# daily simulation on top of that. Short enough that a hung API surfaces as an
-# error rather than a spinner nobody interprets.
 TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
-# The API returns operational language; the simulator and the views use the
-# internal names. Translating here keeps that vocabulary difference in one place.
 ALERT_FIELDS = {
     "current_inventory_tonnes": "closing",
     "silo_capacity_tonnes": "capacity",
@@ -108,12 +82,7 @@ def health() -> dict:
 # forecasts
 # --------------------------------------------------------------------------- #
 def fetch_forecasts(horizon_weeks: int = 8) -> pd.DataFrame:
-    """Flatten the nested response into the frame the views expect.
-
-    The API nests points under each site; `data.get_forecasts` has always
-    returned one flat row per site-week, so the flattening happens here rather
-    than leaking a different shape into the views.
-    """
+    
     body = _post("/forecast", {"horizon_weeks": horizon_weeks})
 
     rows = [
@@ -156,13 +125,10 @@ def fetch_inventory(horizon_weeks: int = 8) -> tuple[pd.DataFrame, pd.Series]:
     if not alerts.empty:
         alerts = alerts.rename(columns=ALERT_FIELDS)
 
-        # `utilisation` is derived rather than transported: it is just fill
-        # fraction, and sending it would let the two drift apart.
         alerts["utilisation"] = np.where(
             alerts.capacity > 0, alerts.closing / alerts.capacity, 0.0)
 
-        # JSON has no infinity. The API sends null for "does not run out inside
-        # the window"; the views expect inf, which they then render as a dash.
+        
         alerts["days_to_stockout"] = (
             pd.to_numeric(alerts.days_to_stockout, errors="coerce")
               .fillna(np.inf))

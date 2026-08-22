@@ -1,10 +1,4 @@
 """Request/response payloads - pydantic BaseModel.
-
-Distinct from config.py, which uses BaseSettings for environment configuration.
-
-Two business endpoints, so two contracts: one for the demand forecast, one for
-the inventory simulation built on top of it. `HealthResponse` is the third, and
-is infrastructure rather than business - see main.py.
 """
 
 from __future__ import annotations
@@ -14,7 +8,6 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 ALL_TYPES = "ALL"
-
 
 # --------------------------------------------------------------------------- #
 # 1. demand forecast

@@ -1,34 +1,5 @@
-"""MLflow run tracking for the training pipeline.
+# MLflow run tracking for the training pipeline.
 
-Without this, a training run leaves behind a model file and some numbers printed
-to a terminal. Run it again next week with different hyperparameters and the
-previous figures are gone - overwritten, with no way to compare. This module
-makes each run a durable, comparable record: parameters in, metrics out,
-artefacts attached, timestamped.
-
-Two design points worth stating, because both are deliberate.
-
-**Tracking never fails a training run.** The pipeline's job is to produce a
-model artefact. If mlflow is not installed, or the tracking directory is
-read-only, or a log call raises, the run should still finish and still save the
-model - so every method here swallows its exceptions and reports once. A
-training job that dies because its logging died is worse than one that logs
-nothing.
-
-**`import mlflow` happens in exactly one place.** It is a heavy dependency,
-pulling in Flask, SQLAlchemy and Alembic. Confining it here means the API and
-the dashboard - which have no reason to carry it - never import it even though
-it sits in the shared requirements.txt. The import is inside `start()` rather
-than at module scope so that merely importing `mig_cement.tracking` costs
-nothing.
-
-Usage:
-
-    with tracking.start("nightly") as run:
-        run.log_params({"n_estimators": 300})
-        run.log_metrics({"test_MAPE": 0.1277})
-        run.log_model(model, sample_input=X.head())
-"""
 
 from __future__ import annotations
 
@@ -43,12 +14,6 @@ from mig_cement.config import settings
 
 
 def git_revision() -> str | None:
-    """Short commit hash, with a `-dirty` suffix when the tree has edits.
-
-    Tagging the run with this is what makes it reproducible: metrics without a
-    commit tell you what happened but not which code produced it. Returns None
-    outside a repository, which is the normal case inside a container.
-    """
     def _git(*args: str) -> str | None:
         try:
             out = subprocess.run(
@@ -65,11 +30,6 @@ def git_revision() -> str | None:
 
 
 class _NullRun:
-    """What callers get when tracking is off or unavailable.
-
-    Every method accepts the same arguments as the real thing and does nothing,
-    so `pipeline.py` needs no `if tracking_enabled:` branches around its logging.
-    """
 
     active = False
 
@@ -82,12 +42,6 @@ class _NullRun:
 
 
 class _MlflowRun(_NullRun):
-    """A live run. Each call is individually guarded.
-
-    Guarding per call rather than per run matters: if logging the 26 MB model
-    fails on a full disk, the params and metrics already recorded should survive
-    rather than the whole run being lost.
-    """
 
     active = True
 
@@ -104,8 +58,6 @@ class _MlflowRun(_NullRun):
 
     def log_params(self, params: dict[str, Any]) -> None:
         with self._guard("params"):
-            # Values are stringified by mlflow anyway, and long ones are
-            # truncated at 6000 characters. The feature list is well inside that.
             self._mlflow.log_params(params)
 
     def log_metrics(self, metrics: dict[str, float]) -> None:
@@ -125,20 +77,7 @@ class _MlflowRun(_NullRun):
 
     def log_model(self, model: Any, sample_input: Any = None,
                   sample_output: Any = None, name: str = "model") -> None:
-        """Log the fitted estimator with a schema.
-
-        The signature is the point of doing this rather than logging the joblib
-        as a plain file. It records the exact column names, order and dtypes the
-        model expects, so loading it later with the wrong feature order fails
-        loudly at load time instead of silently returning wrong numbers - which
-        is the failure mode this project spent effort avoiding elsewhere by
-        sharing `features/build.py` between training and serving.
-
-        Registering is what turns a pile of runs into a versioned model line:
-        each training run adds a new version under one name, so "which model is
-        live" has an answer that is not a filename. It needs the database
-        backend, which is why config.py points at SQLite.
-        """
+        
         with self._guard("model"):
             sample_input = _widen_integers(sample_input)
 
@@ -149,8 +88,6 @@ class _MlflowRun(_NullRun):
 
             import mlflow.sklearn
 
-            # mlflow renamed this argument in 2.x and removed the old name in
-            # 3.x, so try the current spelling first and fall back.
             kwargs = dict(sk_model=model, signature=signature,
                           input_example=sample_input,
                           registered_model_name=settings.model_name)
@@ -161,52 +98,30 @@ class _MlflowRun(_NullRun):
 
 
 def _widen_integers(sample: Any) -> Any:
-    """Declare integer feature columns as float64 in the logged signature.
-
-    Several features - the forward pour sums, days since last delivery - are
-    integers in the training panel, so an inferred schema pins them as int64.
-    NumPy integers cannot hold a missing value, so the moment a caller passes a
-    frame where one of those columns has a NaN, pandas silently promotes it to
-    float and MLflow's schema enforcement rejects the request as a type
-    mismatch. The model itself is indifferent - a random forest splits on the
-    numeric value either way - so the strictness buys nothing and costs a
-    confusing runtime failure.
-
-    Widening at signature time is MLflow's own recommended fix. Non-numeric
-    columns (site_id, region, behavior) are untouched: they are one-hot encoded
-    inside the pipeline and their dtypes carry real meaning.
-    """
     if sample is None or not hasattr(sample, "select_dtypes"):
         return sample
     integer_cols = sample.select_dtypes(include="integer").columns
     return sample.astype({c: "float64" for c in integer_cols}) if len(integer_cols) else sample
 
 
-def _ensure_store(uri: str) -> None:
-    """Create the directory a local SQLite store will live in.
+def _server_reachable(uri: str, timeout: float = 2.0) -> bool:
+    import urllib.error
+    import urllib.request
 
-    SQLAlchemy will happily create the database file, but not the folder holding
-    it, so a first run on a clean checkout would otherwise fail with a bare
-    "unable to open database file".
-    """
+    try:
+        with urllib.request.urlopen(f"{uri.rstrip('/')}/health", timeout=timeout) as r:
+            return r.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _ensure_store(uri: str) -> None:
     if uri.startswith("sqlite:///"):
         db = Path(uri.removeprefix("sqlite:///"))
         db.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _ensure_experiment(mlflow: Any, name: str, uri: str) -> None:
-    """Select the experiment, creating it if this is the first run.
-
-    Against a tracking server the artefact location is left unset on purpose.
-    The server assigns an `mlflow-artifacts:/` URI it resolves itself, which is
-    precisely what lets a run from the host and a run from a container share one
-    experiment - neither client ever names a filesystem path.
-
-    Against a local store there is no server to do that, and MLflow would
-    otherwise resolve the default location against the current working
-    directory, scattering 26 MB models wherever the pipeline happened to be
-    launched from. So the location is pinned at creation time instead.
-    """
     from mlflow.tracking import MlflowClient
 
     client = MlflowClient()
@@ -217,9 +132,6 @@ def _ensure_experiment(mlflow: Any, name: str, uri: str) -> None:
             root.mkdir(parents=True, exist_ok=True)
             kwargs["artifact_location"] = root.as_uri()
         with contextlib.suppress(Exception):
-            # Suppressed rather than guarded: two runs starting together can
-            # both see "missing" and race, and losing that race is harmless -
-            # set_experiment below picks up whichever won.
             client.create_experiment(name, **kwargs)
     mlflow.set_experiment(name)
 
@@ -243,9 +155,17 @@ def start(run_name: str | None = None, enabled: bool = True) -> Iterator[_NullRu
         yield _NullRun()
         return
 
-    # An explicit MLFLOW_TRACKING_URI wins, so compose or CI can redirect runs
-    # to a server without touching config. Otherwise the local SQLite store.
     uri = os.environ.get("MLFLOW_TRACKING_URI") or settings.mlflow_tracking_uri
+
+    if uri.startswith(("http://", "https://")) and not _server_reachable(uri):
+        print(f"  mlflow: no tracking server at {uri} - run not tracked\n"
+              "    start it with `make mlflow`, or "
+              "`docker compose -f docker/docker-compose.yml up -d mlflow`")
+        yield _NullRun()
+        return
+
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
 
     try:
         _ensure_store(uri)
@@ -253,9 +173,6 @@ def start(run_name: str | None = None, enabled: bool = True) -> Iterator[_NullRu
         _ensure_experiment(mlflow, settings.mlflow_experiment, uri)
         run = mlflow.start_run(run_name=run_name)
     except Exception as exc:                            # noqa: BLE001
-        # The exception text is worth the extra line. "MlflowException" alone
-        # cannot distinguish a server that is down from one that is up and
-        # returning 403, and those need different fixes.
         detail = " ".join(str(exc).split())[:160]
         print(f"  mlflow: {uri} unavailable - run not tracked\n"
               f"    {exc.__class__.__name__}: {detail}")

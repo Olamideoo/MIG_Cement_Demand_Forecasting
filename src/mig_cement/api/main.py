@@ -9,11 +9,6 @@ Three business endpoints:
 plus one infrastructure endpoint:
 
     GET  /health      liveness probe for Docker, ECS and the load balancer
-
-The model and the feature panel load once at startup, never per request.
-Startup failure is not fatal: the service comes up and returns 503 with a usable
-message, so a container that boots before its model volume is mounted is visibly
-degraded rather than crash-looping.
 """
 
 from __future__ import annotations
@@ -63,17 +58,8 @@ def _guard() -> None:
 # --------------------------------------------------------------------------- #
 @app.get("/health", response_model=schemas.HealthResponse, tags=["infrastructure"])
 def health() -> schemas.HealthResponse:
-    """Liveness probe. Reports state, never computes it.
+    # Liveness probe. Reports state, never computes it.
 
-    Container orchestrators poll this every few seconds. It must not touch the
-    model or the simulation - a probe that ran a forecast for 30 sites would put
-    the service under constant load and time out under exactly the conditions it
-    exists to detect.
-
-    Returns 200 either way: `model_loaded: false` means the process is alive but
-    has no artefact, which is a deploy problem, not a crash. Restarting the
-    container would not fix it.
-    """
     return schemas.HealthResponse(
         status="ok" if forecaster.is_loaded else "degraded",
         model_loaded=forecaster.is_loaded,
@@ -82,14 +68,6 @@ def health() -> schemas.HealthResponse:
     )
 
 
-# --------------------------------------------------------------------------- #
-# request examples
-#
-# Swagger prefills its "Try it out" box from the first example below. Without
-# these it invents placeholders like {"site_ids": ["string"]}, which are not
-# valid inputs - editing them by hand is how you end up with malformed JSON.
-# Every example here is a request that actually works.
-# --------------------------------------------------------------------------- #
 FORECAST_EXAMPLES = {
     "all_sites": {
         "summary": "Whole estate, full horizon",
@@ -208,13 +186,6 @@ def predict(
     req: Annotated[schemas.PredictRequest,
                    Body(openapi_examples=PREDICT_EXAMPLES)],
 ) -> schemas.PredictResponse:
-    """Score a single site-week, with an optional change to the pour schedule.
-
-    `/forecast` answers "what will these sites need"; this answers "what would
-    happen if next week's pour were different". Only the pour is settable - the
-    rest of the feature row is read from real data, so the model cannot be handed
-    a combination that could never occur.
-    """
     _guard()
     try:
         result = forecaster.predict_one(

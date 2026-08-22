@@ -1,10 +1,4 @@
-"""Environment configuration.
-
-Uses pydantic-settings BaseSettings (NOT BaseModel - that is for API payloads,
-see api/schemas.py). Every path or URL that differs between laptop, container
-and AWS belongs here, plus the business assumptions used by the inventory
-simulation so they are not hardcoded across notebooks.
-"""
+# Environment configuration.
 
 from pathlib import Path
 
@@ -23,28 +17,9 @@ class Settings(BaseSettings):
     models_dir: Path = REPO_ROOT / "MODELS"
 
     # --- mlflow ---
-    # A tracking server, not a local store, and both halves of that are
-    # deliberate.
-    #
-    # Not a file store: MLflow 3 puts the filesystem backend in maintenance mode
-    # and raises on first use, and it cannot host the model registry.
-    #
-    # Not a local SQLite file either, though that fixes both of those. With any
-    # local store, the artefact directory's absolute path is baked into the
-    # experiment when it is created - C:\...\mlruns\artifacts from the host,
-    # /app/mlruns/artifacts from a container. Whichever environment did not
-    # create the experiment then cannot write artefacts to it. Talking HTTP to a
-    # server that owns the store removes the question of paths altogether, and
-    # is the same arrangement this would use on AWS with S3 behind it.
-    #
-    # Start it with `make mlflow` or `docker compose up mlflow`. When it is not
-    # running, training still succeeds and simply logs nothing - see tracking.py.
     mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment: str = "mig-cement-forecasting"
 
-    # Where the *server* keeps artefacts, relative to itself. Clients never use
-    # this; they address artefacts through mlflow-artifacts:/ URIs that the
-    # server resolves. Kept here so `make mlflow` and compose agree.
     mlflow_artifact_root: str = str(REPO_ROOT / "mlruns" / "artifacts")
     mlflow_backend_store: str = f"sqlite:///{(REPO_ROOT / 'mlruns' / 'mlflow.db').as_posix()}"
 

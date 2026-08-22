@@ -4,18 +4,6 @@ A daily `(s, S)` policy driven by the demand forecast:
 
     s (reorder point) = forecast demand over the risk period + safety stock(site)
     S (order-up-to)   = s + one week of forecast demand, capped at silo capacity
-
-The simulation runs **daily**, not weekly. Four of the thirty sites hold less than one
-week of demand (SITE_010 has a 158 t silo against 211 t/week), and the recorded data
-shows deliveries on 98% of site-days — about 6.5 per week. A weekly single-delivery
-model cannot serve those sites and understates readiness for all of them.
-
-Safety stock is set **per site** from that site's own forecast error. Error varies 23x
-across the estate (2.6 to 60.0 t per week), so one global figure both wastes capacity
-at steady sites and leaves volatile ones exposed.
-
-Validated in `NOTEBOOKS/05_Inventory_Simulation.ipynb`: 99.8% pour readiness against
-45.3% for recorded practice, on 21% less cement ordered.
 """
 
 from __future__ import annotations
@@ -38,12 +26,7 @@ TARGET_POUR_READINESS = 0.98
 def safety_stock(sigma_weekly: float | pd.Series,
                  lead_time_days: int | None = None,
                  z: float | None = None) -> float | pd.Series:
-    """z * sigma * sqrt(lead time + review period).
 
-    The review period matters. With weekly review and a 3-day lead time the exposure
-    is 10 days, not 3 - omitting it collapses readiness to 94%. Here review is daily,
-    so the risk period is lead + 1.
-    """
     lead = lead_time_days if lead_time_days is not None else settings.lead_time_days
     zz = z if z is not None else settings.service_level_z
     risk_period = lead + REVIEW_DAYS
@@ -62,18 +45,6 @@ def reorder_point(forecast_daily: float, safety: float, capacity: float,
 # --------------------------------------------------------------------------- #
 def to_daily_plan(clean_daily: pd.DataFrame,
                   weekly_forecast: pd.DataFrame) -> pd.DataFrame:
-    """Spread each weekly forecast across its days, in proportion to planned pour.
-
-    The model forecasts a week; the silo empties a day at a time. Splitting by the
-    pour schedule rather than evenly matters because pours cluster - an even split
-    would show stock the site does not have on the day it pours.
-
-    Args:
-        clean_daily: cleaned daily panel.
-        weekly_forecast: `site_id`, `date` (Monday of the week), `forecast_tonnes`.
-
-    Returns the daily rows `simulate` expects, for the forecast weeks only.
-    """
     need = {"site_id", "date", "forecast_tonnes"}
     missing = need - set(weekly_forecast.columns)
     if missing:
@@ -103,17 +74,6 @@ def to_daily_plan(clean_daily: pd.DataFrame,
 def simulate(daily: pd.DataFrame,
              safety_by_site: pd.Series,
              lead_time_days: int | None = None) -> pd.DataFrame:
-    """Daily (s, S) simulation, one silo per site.
-
-    Args:
-        daily: one row per site-day with `date`, `site_id`, `consumed_tonnes`,
-            `planned_pour_tonnes`, `silo_capacity`, `opening_inventory_tonnes`,
-            `day_forecast` and `week_forecast`.
-        safety_by_site: safety stock in tonnes, indexed by `site_id`.
-
-    Returns one row per simulated site-day. FIFO layers track stock age so anything
-    held past the shelf life is written off.
-    """
     lead = lead_time_days if lead_time_days is not None else settings.lead_time_days
     risk_period = lead + REVIEW_DAYS
     default_safety = float(safety_by_site.median())
@@ -180,14 +140,7 @@ def simulate(daily: pd.DataFrame,
 # scoring
 # --------------------------------------------------------------------------- #
 def summarise(sim: pd.DataFrame, warmup_days: int = WARMUP_DAYS) -> pd.Series:
-    """Policy metrics, scored on pour days after a warm-up.
-
-    Two exclusions, both standard for an inventory backtest:
-      * pour days only - a day with no scheduled pour cannot cause a stockout
-      * after a warm-up - the simulation starts with nothing in transit, so the first
-        lead-time window cannot be replenished. 41 of 43 stockouts fall in week 1,
-        and they correlate -0.80 with opening stock: an initialisation artefact.
-    """
+    
     scored = sim[sim.date >= sim.date.min() + pd.Timedelta(days=warmup_days)]
     pour = scored[scored.pour_day]
     return pd.Series({

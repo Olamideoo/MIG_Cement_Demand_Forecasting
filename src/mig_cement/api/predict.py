@@ -1,21 +1,5 @@
 """Inference. Loads the persisted model and serves forecasts over the same
 feature builder used in training.
-
-Two notes on how this differs from the original scaffold, both because the model
-that actually won is not the one the scaffold anticipated:
-
-1. **Not recursive.** Every feature is derived from the pour schedule, which is
-   known up to 4 weeks ahead, so all horizons are predicted in one pass. There is
-   no feeding of week *n* back in as an input to week *n+1*, and therefore no
-   error compounding - accuracy is flat across the 8-week horizon.
-
-2. **Site grain, not site x cement type.** Each of the 30 sites handles all three
-   cement grades; the model aggregates over them and takes `site_id`, `region` and
-   `behavior` as the categorical features. Responses report cement_type as "ALL".
-
-Feature construction is delegated to `features.build` - the same function the
-training pipeline calls. Nothing in this file reimplements it. That is the
-train/serve skew failure described in WORKFLOW.md section 2.3.
 """
 
 from __future__ import annotations
@@ -130,11 +114,7 @@ class Forecaster:
         sigma = frame.site_id.map(self._sigma).fillna(FALLBACK_SIGMA).to_numpy()
         margin = INTERVAL_Z * sigma
 
-        # `y` is the observed weekly consumption. The servable window sits after
-        # the training cutoff but still inside the recorded data, so most of these
-        # weeks have actually happened. Returning the truth alongside the
-        # prediction lets a client score accuracy without reading the database
-        # itself - it is None for weeks that genuinely have not occurred yet.
+        # `y` is the observed weekly consumption. 
         actual = (frame[TARGET].to_numpy() if TARGET in frame.columns
                   else np.full(len(frame), np.nan))
 
@@ -170,16 +150,6 @@ class Forecaster:
     def predict_one(self, site_id: str, week: pd.Timestamp | None = None,
                     planned_pour_tonnes: float | None = None) -> dict:
         """Score a single site-week, optionally with the pour schedule changed.
-
-        The row is taken from the real panel and only the requested field is
-        overridden. Everything else - capacity, region, behaviour, and the
-        forward-looking schedule sums - stays as recorded, so the model never
-        sees a combination that could not occur.
-
-        A random forest averages the training leaves it lands in, so it cannot
-        extrapolate: past the largest pour ever observed the prediction simply
-        stops moving. The response says so rather than returning a confident
-        number with no caveat.
         """
         self._require()
         window = self.servable()
@@ -198,10 +168,6 @@ class Forecaster:
         row = rows.sort_values("date").iloc[[0]].copy()
         baseline = float(self._predict(row)[0])
 
-        # Range is per site, not per estate. The estate maximum is set by the
-        # large sites; checking against it would wave through 300 t for a site
-        # whose largest recorded pour is 118 t - exactly the case this guard
-        # exists to catch.
         site_hist = self._panel[self._panel.site_id == site_id].planned_pour_tonnes
         site_lo, site_hi = float(site_hist.min()), float(site_hist.max())
 
@@ -225,10 +191,7 @@ class Forecaster:
         pred = float(self._predict(row)[0])
         r = row.iloc[0]
 
-        # No interval on a what-if. Sigma is this site's realised hold-out error
-        # against its real schedule; it says nothing about a pour the site has
-        # never attempted, and a tight band around an extrapolation reads as
-        # confidence that was never measured.
+        
         if planned_pour_tonnes is None:
             margin = INTERVAL_Z * float(self._sigma.get(site_id, FALLBACK_SIGMA))
             lower, upper = round(max(pred - margin, 0.0), 2), round(pred + margin, 2)
@@ -270,10 +233,7 @@ class Forecaster:
             if not site_ids:
                 return pd.DataFrame(), pd.Series(dtype=float)
 
-        # Full precision on purpose. `predict_batch` rounds to 2 dp because that
-        # is what goes over the wire, but the simulation is a computation, not a
-        # response - feeding it rounded input makes the API's policy figures
-        # drift from the same policy run locally.
+        
         window = self.servable()
         if site_ids:
             window = window[window.site_id.isin(site_ids)]
