@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "").rstrip("/")
