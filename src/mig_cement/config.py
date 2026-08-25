@@ -1,10 +1,4 @@
-"""Environment configuration.
-
-Uses pydantic-settings BaseSettings (NOT BaseModel - that is for API payloads,
-see api/schemas.py). Every path or URL that differs between laptop, container
-and AWS belongs here, plus the business assumptions used by the inventory
-simulation so they are not hardcoded across notebooks.
-"""
+# Environment configuration.
 
 from pathlib import Path
 
@@ -23,9 +17,13 @@ class Settings(BaseSettings):
     models_dir: Path = REPO_ROOT / "MODELS"
 
     # --- mlflow ---
-    mlflow_tracking_uri: str = f"file://{REPO_ROOT / 'mlruns'}"
+    mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment: str = "mig-cement-forecasting"
-    model_name: str = "mig-cement-forecaster"
+
+    mlflow_artifact_root: str = str(REPO_ROOT / "mlruns" / "artifacts")
+    mlflow_backend_store: str = f"sqlite:///{(REPO_ROOT / 'mlruns' / 'mlflow.db').as_posix()}"
+
+    model_name: str = "rf_demand_forecaster"
     model_stage: str = "Staging"
 
     # --- services ---

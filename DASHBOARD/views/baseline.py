@@ -1,9 +1,5 @@
-"""Baseline — what the data showed before the forecast existed.
+# Baseline — what the data showed before the forecast existed.
 
-Context for every other page. The green figures elsewhere only mean something
-against the problem they replaced, and each finding here is drawn from the recorded
-data rather than asserted.
-"""
 
 from __future__ import annotations
 
@@ -12,7 +8,6 @@ import streamlit as st
 
 import data as dat
 import theme
-
 
 
 def render() -> None:

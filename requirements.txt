@@ -1,23 +1,39 @@
+# scikit-learn is pinned because the model is a pickle. Unpickling under a
+# different version warns at best and changes behaviour at worst, and the
+# version below is the one recorded in rf_demand_forecaster_meta.json.
+# Retrain before changing it.
 numpy
 pandas
-pyarrow          # parquet
-scikit-learn
-statsmodels      # SARIMAX baseline
-joblib           # model persistence
+pyarrow                 # parquet
+scikit-learn==1.9.0
+statsmodels             # SARIMAX baseline
+joblib                  # model persistence
 
 # --- config ---
 pydantic
 pydantic-settings
-python-dotenv
+python-dotenv           # reads .env for API_BASE_URL
+
+# --- experiment tracking ---
+# Only the training job imports this; the API and dashboard never do. It is here
+# rather than in a separate training requirements file because all three images
+# install from this one file, and splitting it would touch all three Dockerfiles.
+# If image size becomes a concern on ECS, that split is the fix - mlflow pulls in
+# Flask, SQLAlchemy and Alembic, none of which serving needs.
+mlflow
 
 # --- api ---
 fastapi
 uvicorn[standard]
-httpx            # TestClient
+httpx                   # the dashboard's HTTP client, and TestClient
 
 # --- dashboard ---
 streamlit
 plotly
+
+# --- tests and linting ---
+pytest
+ruff
 
 # --- notebooks ---
 jupyter
@@ -25,9 +41,3 @@ ipykernel
 matplotlib
 seaborn
 openpyxl
-pydantic
-pydantic-settings
-python-dotenv
-fastapi
-uvicorn
-gunicorn

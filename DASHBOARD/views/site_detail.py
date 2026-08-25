@@ -26,8 +26,6 @@ def render() -> None:
     capacity = float(proj.capacity.iloc[0])
 
     # --- site KPIs --------------------------------------------------------- #
-    # st.metric renders its delta as a grey arrow regardless of meaning, so a
-    # severity of "green" read as neutral. These cards colour by status instead.
     fill = proj.closing.iloc[-1] / capacity
     severity = alert.severity.iloc[0] if not alert.empty else None
     status = theme.SEVERITY_STATUS.get(severity, "neutral")
@@ -58,7 +56,6 @@ def render() -> None:
                            "order soon" if severity == "amber" else "no action",
                            status)
 
-    pour = proj[proj.pour_met.notna()]
     missed = int((~proj.pour_met).sum())
     if missed:
         st.warning(f"{missed} day(s) where demand exceeded available stock. "

@@ -1,11 +1,30 @@
 .git/
+.gitattributes
 .venv/
 __pycache__/
-.ipynb_checkpoints/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Analysis lives outside the runtime images.
 NOTEBOOKS/
-DATA/
-MODELS/
 REPORTS/
-mlruns/
 infra/
+mlruns/
 *.md
+!README.md
+
+# Local config never goes into an image - compose and ECS supply the real values.
+.env
+
+# --- data ------------------------------------------------------------------ #
+DATA/MIG_Cement_Records.db          # duplicate of DATA/raw - not the configured path
+DATA/interim/
+DATA/processed/operations_feature_engineered.parquet
+
+
+# --- models ---------------------------------------------------------------- #
+MODELS/*
+!MODELS/rf_demand_forecaster.joblib
+!MODELS/rf_demand_forecaster_meta.json

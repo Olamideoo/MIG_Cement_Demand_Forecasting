@@ -1,21 +1,5 @@
 """Inference. Loads the persisted model and serves forecasts over the same
 feature builder used in training.
-
-Two notes on how this differs from the original scaffold, both because the model
-that actually won is not the one the scaffold anticipated:
-
-1. **Not recursive.** Every feature is derived from the pour schedule, which is
-   known up to 4 weeks ahead, so all horizons are predicted in one pass. There is
-   no feeding of week *n* back in as an input to week *n+1*, and therefore no
-   error compounding - accuracy is flat across the 8-week horizon.
-
-2. **Site grain, not site x cement type.** Each of the 30 sites handles all three
-   cement grades; the model aggregates over them and takes `site_id`, `region` and
-   `behavior` as the categorical features. Responses report cement_type as "ALL".
-
-Feature construction is delegated to `features.build` - the same function the
-training pipeline calls. Nothing in this file reimplements it. That is the
-train/serve skew failure described in WORKFLOW.md section 2.3.
 """
 
 from __future__ import annotations
@@ -28,7 +12,7 @@ import pandas as pd
 
 from mig_cement.config import settings
 from mig_cement.data import load, preprocess
-from mig_cement.features.build import FEATURES, build_weekly_panel
+from mig_cement.features.build import FEATURES, TARGET, build_weekly_panel
 from mig_cement.inventory import simulate as inv
 
 MODEL_FILE = "rf_demand_forecaster.joblib"
@@ -129,6 +113,11 @@ class Forecaster:
         pred = self._predict(frame)
         sigma = frame.site_id.map(self._sigma).fillna(FALLBACK_SIGMA).to_numpy()
         margin = INTERVAL_Z * sigma
+
+        # `y` is the observed weekly consumption. 
+        actual = (frame[TARGET].to_numpy() if TARGET in frame.columns
+                  else np.full(len(frame), np.nan))
+
         return pd.DataFrame({
             "site_id": frame.site_id.to_numpy(),
             "date": pd.to_datetime(frame.date).to_numpy(),
@@ -136,6 +125,7 @@ class Forecaster:
             "lower": np.clip(pred - margin, 0, None).round(2),
             "upper": (pred + margin).round(2),
             "horizon_week": frame.groupby("site_id").cumcount().to_numpy() + 1,
+            "actual_tonnes": np.round(actual.astype(float), 2),
         })
 
     def predict_batch(self, site_ids: list[str] | None = None,
@@ -156,6 +146,75 @@ class Forecaster:
                       .groupby("site_id", group_keys=False).head(horizon_weeks))
         return self._with_intervals(rows)
 
+    # --- what-if ------------------------------------------------------------ #
+    def predict_one(self, site_id: str, week: pd.Timestamp | None = None,
+                    planned_pour_tonnes: float | None = None) -> dict:
+        """Score a single site-week, optionally with the pour schedule changed.
+        """
+        self._require()
+        window = self.servable()
+        rows = window[window.site_id == site_id]
+        if rows.empty:
+            raise KeyError(site_id)
+
+        if week is not None:
+            rows = rows[rows.date == pd.Timestamp(week)]
+            if rows.empty:
+                available = sorted(window[window.site_id == site_id].date.dt.date)
+                raise ValueError(
+                    f"no servable week {pd.Timestamp(week).date()} for {site_id}. "
+                    f"Available: {available[0]} to {available[-1]}.")
+
+        row = rows.sort_values("date").iloc[[0]].copy()
+        baseline = float(self._predict(row)[0])
+
+        site_hist = self._panel[self._panel.site_id == site_id].planned_pour_tonnes
+        site_lo, site_hi = float(site_hist.min()), float(site_hist.max())
+
+        warning, in_range = None, True
+        if planned_pour_tonnes is not None:
+            if planned_pour_tonnes > site_hi:
+                in_range = False
+                warning = (
+                    f"{site_id} has never poured more than {site_hi:.0f} t; you "
+                    f"asked for {planned_pour_tonnes:.0f} t. The model has no "
+                    "example of this site at that scale, so it borrows from other "
+                    "sites and stops responding once the value passes the estate "
+                    f"maximum of {self._panel.planned_pour_tonnes.max():.0f} t.")
+            elif planned_pour_tonnes < site_lo:
+                in_range = False
+                warning = (
+                    f"{site_id} has never poured less than {site_lo:.0f} t; you "
+                    f"asked for {planned_pour_tonnes:.0f} t.")
+            row["planned_pour_tonnes"] = planned_pour_tonnes
+
+        pred = float(self._predict(row)[0])
+        r = row.iloc[0]
+
+        
+        if planned_pour_tonnes is None:
+            margin = INTERVAL_Z * float(self._sigma.get(site_id, FALLBACK_SIGMA))
+            lower, upper = round(max(pred - margin, 0.0), 2), round(pred + margin, 2)
+        else:
+            lower = upper = None
+
+        return {
+            "site_id": site_id,
+            "week": r.date.date(),
+            "predicted_tonnes": round(pred, 2),
+            "lower": lower,
+            "upper": upper,
+            "planned_pour_tonnes": round(float(r.planned_pour_tonnes), 2),
+            "baseline_tonnes": (round(baseline, 2)
+                                if planned_pour_tonnes is not None else None),
+            "actual_tonnes": (round(float(r[TARGET]), 2)
+                              if TARGET in row.columns and pd.notna(r[TARGET])
+                              else None),
+            "site_pour_range": [round(site_lo, 2), round(site_hi, 2)],
+            "in_training_range": in_range,
+            "warning": warning,
+        }
+
     # --- inventory ---------------------------------------------------------- #
     def simulate(self, site_ids: list[str] | None = None,
                  region: str | None = None,
@@ -174,9 +233,15 @@ class Forecaster:
             if not site_ids:
                 return pd.DataFrame(), pd.Series(dtype=float)
 
-        fc = self.predict_batch(site_ids, horizon_weeks)
-        plan = inv.to_daily_plan(
-            self._daily, fc.rename(columns={"predicted_tonnes": "forecast_tonnes"}))
+        
+        window = self.servable()
+        if site_ids:
+            window = window[window.site_id.isin(site_ids)]
+        rows = (window.sort_values(["site_id", "date"])
+                      .groupby("site_id", group_keys=False).head(horizon_weeks))
+        fc = rows[["site_id", "date"]].assign(forecast_tonnes=self._predict(rows))
+
+        plan = inv.to_daily_plan(self._daily, fc)
         sim = inv.simulate(plan, inv.safety_stock(self._sigma))
 
         alerts = inv.reorder_alerts(sim)

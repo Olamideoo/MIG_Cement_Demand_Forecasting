@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))       # let views import `data`
 st.set_page_config(page_title="MIG Cement Demand Forecasting",
                    page_icon="🏗️", layout="wide")
 
-import data as dat                                    # noqa: E402
+import api_client  # noqa: E402
+import data as dat  # noqa: E402
 from views import baseline, inventory, overview, performance, site_detail  # noqa: E402
 
 PAGES = {
@@ -29,6 +30,19 @@ PAGES = {
     "Inventory & alerts": inventory.render,
     "Model performance": performance.render,
 }
+
+
+def _api_version() -> str:
+    """Which artefact the API is actually serving.
+
+    Shown next to the URL because in API mode the sidebar metadata below is read
+    from this container's MODELS/ directory, which need not be the same file the
+    API loaded. Printing both makes a mismatch visible instead of silent.
+    """
+    try:
+        return api_client.health().get("model_version") or "unknown"
+    except api_client.ApiUnavailable:
+        return "unreachable"
 
 
 def main() -> None:
@@ -45,13 +59,32 @@ def main() -> None:
 
     meta = dat.get_model_metadata()
     st.sidebar.divider()
+
+    # State the data source explicitly. Two deployments produce identical-looking
+    # screens from different places, and "which one am I looking at" is the first
+    # question when a number seems wrong.
+    if api_client.in_api_mode():
+        st.sidebar.caption(
+            f"**Source** API  \n`{api_client.API_BASE_URL}`  \n"
+            f"model {_api_version()}")
+    else:
+        st.sidebar.caption("**Source** local model  \nno API_BASE_URL set")
+
     st.sidebar.caption(
         f"**Model** {meta.get('name', 'n/a')}  \n"
         f"{meta.get('grain', '')}  \n"
         f"horizon {meta.get('horizon_weeks', '?')} weeks  \n"
         f"trained to {meta.get('trained_on', {}).get('to', '?')}")
-    if st.sidebar.button("Refresh data"):
+    if st.sidebar.button("Reload model and data",
+                         help="Re-reads the database, the saved model and the "
+                              "forecasts, then re-runs the simulation. Use after "
+                              "`make pipeline`."):
+        # Both caches, not just cache_data. The model is held in cache_resource,
+        # so clearing only cache_data would refresh the metadata in this sidebar
+        # while the old model object stayed in memory - new numbers, stale
+        # predictions, and nothing on screen to say so.
         st.cache_data.clear()
+        st.cache_resource.clear()
         st.rerun()
 
     st.title("MIG Cement Demand Forecasting")

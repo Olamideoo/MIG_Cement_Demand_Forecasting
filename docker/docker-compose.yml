@@ -1,39 +1,92 @@
-services:
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
-    command: >
-      mlflow server --host 0.0.0.0 --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
-    volumes:
-      - mlflow_data:/mlflow
-    ports:
-      - "5000:5000"
+# Local stack.
+#
+#   docker compose -f docker/docker-compose.yml up --build       api + dashboard
+#   docker compose -f docker/docker-compose.yml run --rm model   retrain
+#   docker compose -f docker/docker-compose.yml --profile tools up mlflow
 
+name: mig-cement
+
+services:
+  # --- training job ------------------------------------------------------- #
+  model:
+    profiles: ["train"]
+    build:
+      context: ..
+      dockerfile: docker/model.Dockerfile
+    volumes:
+      - ../MODELS:/app/MODELS
+      - ../DATA/processed:/app/DATA/processed
+    environment:
+      DB_PATH: /app/DATA/raw/MIG_Cement_Records.db
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_PYTHON_REFRESH: quiet
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  # --- forecasting API ---------------------------------------------------- #
   api:
     build:
       context: ..
       dockerfile: docker/api.Dockerfile
-    environment:
-      MLFLOW_TRACKING_URI: http://mlflow:5000
-      DB_PATH: /data/MIG_Cement_Records.db
-    volumes:
-      - ../DATA/raw:/data:ro
     ports:
       - "8000:8000"
-    depends_on:
-      - mlflow
+    volumes:
+      - ../MODELS:/app/MODELS:ro
+      - ../DATA/processed:/app/DATA/processed:ro
+    environment:
+      DB_PATH: /app/DATA/raw/MIG_Cement_Records.db
+    restart: unless-stopped
 
+  # --- MLflow tracking server ---------------------------------------------- #
+ 
+  mlflow:
+    build:
+      context: ..
+      dockerfile: docker/model.Dockerfile
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////app/mlruns/mlflow.db
+      - --artifacts-destination
+      - /app/mlruns/artifacts
+      - --serve-artifacts
+      - --host
+      - "0.0.0.0"          # bind all interfaces, or the published port reaches nothing
+      - --port
+      - "5000"
+
+      - --allowed-hosts
+      - mlflow:5000,localhost:5000,127.0.0.1:5000
+      
+      - --workers
+      - "1"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../mlruns:/app/mlruns
+    environment:
+      GIT_PYTHON_REFRESH: quiet
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+
+  # --- Streamlit dashboard ------------------------------------------------ #
   dashboard:
     build:
       context: ..
       dockerfile: docker/dashboard.Dockerfile
+    ports:
+      - "8501:8501"
     environment:
       API_BASE_URL: http://api:8000
-    ports:
-      - "8050:8050"
     depends_on:
-      - api
-
-volumes:
-  mlflow_data:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

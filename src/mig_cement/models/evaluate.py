@@ -1,9 +1,4 @@
-"""Metrics and backtesting.
-
-MAPE is undefined at zero and 12.2% of observed rows are zero, so WAPE and MASE
-are the primary metrics. MAPE is reported only on weekly aggregates, where it is
-well defined - see WORKFLOW.md 1.3(e).
-"""
+# Metrics and backtesting.
 
 from __future__ import annotations
 
@@ -73,8 +68,3 @@ def time_split(df: pd.DataFrame, train_end: str, val_end: str,
         "val": df[(d > train_end) & (d <= val_end)],
         "test": df[d > val_end],
     }
-
-
-def rolling_origin_backtest(panel: pd.DataFrame, model, horizon_weeks: int = 8):
-    """Expanding-window backtest with `horizon_weeks` ahead forecasts."""
-    raise NotImplementedError

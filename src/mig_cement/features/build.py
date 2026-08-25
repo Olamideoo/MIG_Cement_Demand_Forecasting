@@ -1,13 +1,4 @@
-"""Feature construction — the weekly modelling panel.
-
-CRITICAL: this is the single implementation used by BOTH training and inference.
-`pipeline.py` calls it to build the training panel; `api/predict.py` calls it to build
-the panel for a forecast request. Never copy this logic into either.
-
-The frozen model uses 8 features, all derived from the pour schedule and site
-attributes. Weather, inventory state and target lags are deliberately excluded —
-none are knowable at an 8-week ordering horizon. See notebook 04 for the ablation.
-"""
+# Feature construction — the weekly modelling panel.
 
 from __future__ import annotations
 
@@ -56,12 +47,6 @@ def add_schedule_features(daily: pd.DataFrame) -> pd.DataFrame:
 
 def to_weekly(daily: pd.DataFrame, drop_partial: bool = True
               ) -> tuple[pd.DataFrame, int]:
-    """Aggregate to one row per site-week, labelled by the Monday start.
-
-    Partial weeks are dropped by default. `resample` opens and closes each series
-    with buckets holding fewer than 7 days, and those average ~50 t against ~166 t
-    for a full week — they read as a demand collapse rather than a short bucket.
-    """
     df = daily.copy()
     df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
 

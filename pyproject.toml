@@ -15,6 +15,18 @@ where = ["src"]
 line-length = 100
 target-version = "py310"
 
+# The project has two import roots, not one. `src` holds the installed package;
+# `DASHBOARD` is put on sys.path by `streamlit run`, which is why its modules
+# import each other flatly (`import data as dat`, `import theme`).
+#
+# Declaring both is what lets isort tell a local module from a PyPI one. Without
+# DASHBOARD listed, `data`, `theme` and `api_client` were sorted as third-party
+# libraries, and `data` was only classified correctly by accident - an empty
+# src/data/ directory happened to exist. Deleting that scaffold silently flipped
+# the classification and broke the lint, which is exactly the kind of thing that
+# should be stated rather than inferred.
+src = ["src", "DASHBOARD"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
