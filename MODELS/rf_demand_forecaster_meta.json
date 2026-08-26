@@ -1,0 +1,53 @@
+{
+  "name": "rf_demand_forecaster",
+  "created_utc": "2026-08-21T21:47:24+00:00",
+  "estimator": "RandomForestRegressor(n_estimators=300, random_state=42)",
+  "features": [
+    "planned_pour_tonnes",
+    "planned_pour_next_7",
+    "planned_pour_next_14",
+    "days_since_planned_pour",
+    "silo_capacity",
+    "site_id",
+    "region",
+    "behavior"
+  ],
+  "categorical_features": [
+    "site_id",
+    "region",
+    "behavior"
+  ],
+  "target": "y (consumed_tonnes, summed to the week)",
+  "grain": "weekly, per site, weeks labelled by Monday start",
+  "horizon_weeks": 8,
+  "trained_on": {
+    "rows": 4320,
+    "from": "2022-01-03",
+    "to": "2024-09-30",
+    "sites": 30
+  },
+  "validation_metrics": {
+    "MAPE": 0.1077,
+    "RMSE": 30.4617,
+    "WAPE": 0.1182,
+    "MAE": 19.6227,
+    "bias": 0.9552
+  },
+  "holdout_metrics": {
+    "MAPE": 0.1277,
+    "RMSE": 30.5729,
+    "WAPE": 0.1311,
+    "MAE": 21.2478,
+    "bias": 1.9218
+  },
+  "project_target": {
+    "MAPE": 0.15,
+    "met": true
+  },
+  "versions": {
+    "python": "3.13.5",
+    "scikit_learn": "1.9.0",
+    "pandas": "2.3.3",
+    "numpy": "2.5.2"
+  }
+}

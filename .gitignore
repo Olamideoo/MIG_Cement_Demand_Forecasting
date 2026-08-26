@@ -30,12 +30,9 @@ DATA/processed/*
 !DATA/**/.gitkeep
 
 # Model artifacts and experiment tracking
-MODELS/*
-!MODELS/.gitkeep
 mlruns/
 mlartifacts/
 *.pkl
-*.joblib
 
 # Terraform
 infra/.terraform/
@@ -45,3 +42,5 @@ infra/.terraform/
 # Planning docs kept local
 decisions.md
 WORKFLOW.md
+.gitattributes
+
