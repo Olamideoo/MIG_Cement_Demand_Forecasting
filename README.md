@@ -6,8 +6,6 @@ API and operations dashboard.
 
 **Live:** [Dashboard](http://13.59.81.166/) · [API docs](http://13.59.81.166/api/docs) · [Model tracking](http://13.59.81.166/mlflow/)
 
-> Demonstration deployment on a single EC2 instance. HTTP only, no authentication —
-> fine for review, not a production posture.
 
 ---
 
