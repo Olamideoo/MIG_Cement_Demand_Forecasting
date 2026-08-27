@@ -2,8 +2,7 @@
 
 FROM python:3.11-slim AS builder
 WORKDIR /build
-# Runtime layer only. The dashboard charts with plotly, not matplotlib or
-# seaborn - those are notebook packages and stay out of this image.
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
@@ -24,7 +23,7 @@ USER appuser
 
 EXPOSE 8501
 
-# Streamlit's own health path. Cheap, and it does not touch the API.
+# Streamlit's own health check.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; \
 sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health').status==200 else 1)"

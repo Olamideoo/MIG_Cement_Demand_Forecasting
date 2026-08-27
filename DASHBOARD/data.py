@@ -1,16 +1,4 @@
 """Data access for the dashboard.
-
-Everything the UI needs comes through here, so the views never touch the model,
-the database or the simulator directly. That single seam is what let the
-operational loaders move onto the FastAPI service without any view changing.
-
-Set API_BASE_URL and the forecast, alerts, summary and site list come over HTTP;
-leave it unset and they are computed locally from the saved model. The analytical
-loaders (the baseline page, the daily simulation, the 33k-row panels) always read
-locally - they are the wrong shape to push through JSON.
-
-All loaders are cached. The simulation takes a few seconds and must not re-run on
-every widget interaction.
 """
 
 from __future__ import annotations
@@ -29,15 +17,6 @@ from mig_cement.inventory import simulate as inv
 
 CACHE_TTL = 3600
 
-# Four loaders can be served over HTTP; the rest read locally. The split is not
-# arbitrary - the operational numbers (what to order, for which site, this week)
-# are what the API exists to serve, while the analytical pages need 33k-row
-# panels that would be far slower as JSON than as a local parquet read.
-#
-# `api_client.in_api_mode()` is driven by API_BASE_URL. Unset means local, which
-# is how the notebooks and a bare `streamlit run` still work.
-
-
 # --------------------------------------------------------------------------- #
 # artefacts
 # --------------------------------------------------------------------------- #
@@ -53,6 +32,11 @@ def get_model():
 
 @st.cache_data(ttl=CACHE_TTL)
 def get_model_metadata() -> dict:
+    """The model card - features, horizon, training window, metrics.
+    """
+    if api_client.in_api_mode():
+        return api_client.health().get("metadata", {})
+
     path = settings.models_dir / "rf_demand_forecaster_meta.json"
     return json.loads(path.read_text()) if path.exists() else {}
 
@@ -76,12 +60,6 @@ def get_weekly_panel() -> pd.DataFrame:
 
 @st.cache_data(ttl=CACHE_TTL)
 def get_forecasts() -> pd.DataFrame:
-    """Weekly forecasts, with the actuals needed to score them.
-
-    From the API when one is configured, otherwise the parquet the pipeline
-    wrote. Both carry `forecast_tonnes` and `actual_tonnes`, so the performance
-    page works either way.
-    """
     if api_client.in_api_mode():
         fc = api_client.fetch_forecasts()
     else:
@@ -119,8 +97,7 @@ def get_simulation() -> pd.DataFrame:
     if fc.empty:
         return pd.DataFrame()
 
-    # Disaggregation lives in `inventory.simulate` so the API and the dashboard
-    # cannot drift apart on how a weekly forecast becomes a daily plan.
+    
     daily = inv.to_daily_plan(get_clean_daily(),
                               fc[["site_id", "date", "forecast_tonnes"]])
     return inv.simulate(daily, inv.safety_stock(get_site_sigma()))
@@ -129,9 +106,6 @@ def get_simulation() -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL)
 def _inventory() -> tuple[pd.DataFrame, pd.Series]:
     """Alerts and summary together - they come from one simulation run.
-
-    Fetching them separately would run the simulation twice and let the two
-    halves disagree.
     """
     if api_client.in_api_mode():
         return api_client.fetch_inventory()

@@ -6,17 +6,6 @@
 #   requirements-train.txt  the above, plus experiment tracking
 #   requirements-dev.txt    the above, plus tests, linting and notebooks
 #
-# The split exists because every image installs from one of these, and the api
-# and dashboard images were previously pulling in JupyterLab, Notebook,
-# matplotlib and seaborn - none of which appears in a single runtime import.
-# Keep it that way: if a package is only used in NOTEBOOKS/, it belongs in
-# requirements-dev.txt.
-
-# --- core ---
-# scikit-learn is pinned because the model is a pickle. Unpickling under a
-# different version warns at best and changes behaviour at worst, and the
-# version below is the one recorded in rf_demand_forecaster_meta.json.
-# Retrain before changing it.
 numpy
 pandas
 pyarrow                 # pandas' parquet engine - imported indirectly, still required

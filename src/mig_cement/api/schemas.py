@@ -168,3 +168,12 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_version: str | None = None
     sites_servable: int = 0
+
+    metadata: dict = Field(
+        default_factory=dict,
+        description="The model card: features, grain, horizon, training window "
+                    "and both sets of metrics. Served because a client may not "
+                    "have the artefact - the dashboard runs in a container with "
+                    "no MODELS/ directory, and without this its accuracy tile "
+                    "and model panel have nothing to read. Held in memory from "
+                    "startup, so returning it costs nothing.")

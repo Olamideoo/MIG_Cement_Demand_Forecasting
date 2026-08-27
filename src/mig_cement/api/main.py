@@ -65,6 +65,7 @@ def health() -> schemas.HealthResponse:
         model_loaded=forecaster.is_loaded,
         model_version=forecaster.model_version if forecaster.is_loaded else None,
         sites_servable=len(forecaster.sites()) if forecaster.is_loaded else 0,
+        metadata=forecaster.metadata if forecaster.is_loaded else {},
     )
 
 

@@ -96,17 +96,24 @@ def test_health_reports_a_loaded_model(client):
     assert body["model_version"] not in (None, "", "unloaded")
 
 
-def test_health_stays_200_when_degraded(unloaded):
-    """A missing model volume is a deploy problem, not a crash.
+@needs_model
+def test_health_carries_the_model_card(client):
+    meta = client.get("/health").json()["metadata"]
 
-    Returning 503 here would make an orchestrator kill and reschedule the task
-    in a loop instead of leaving it up to be diagnosed.
-    """
+    assert meta["horizon_weeks"] == 8
+    assert meta["trained_on"]["to"]                      # the training cutoff
+    assert meta["holdout_metrics"]["MAPE"] <= 0.15       # the tile's own threshold
+    assert meta["features"]                              # what the model expects
+
+
+def test_degraded_health_carries_no_model_card(unloaded):
+    assert unloaded.get("/health").json()["metadata"] == {}
+
+def test_health_stays_200_when_degraded(unloaded):
     response = unloaded.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
     assert response.json()["model_loaded"] is False
-
 
 def test_business_endpoints_refuse_to_serve_when_degraded(unloaded):
     """/health is lenient; the endpoints that need the model are not."""
@@ -119,12 +126,9 @@ def test_business_endpoints_refuse_to_serve_when_degraded(unloaded):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("horizon", [0, -1, 9, 99])
 def test_horizon_outside_the_trained_range_is_rejected(client, horizon):
-    """The model was trained and validated on 8 weeks. Asking for 20 would be
-    extrapolating past anything measured, so it is refused at the door."""
     r = client.post("/forecast", json={"horizon_weeks": horizon})
     assert r.status_code == 422
     assert r.json()["detail"][0]["loc"] == ["body", "horizon_weeks"]
-
 
 def test_horizon_must_be_an_integer(client):
     assert client.post("/forecast", json={"horizon_weeks": "eight"}).status_code == 422
@@ -174,12 +178,6 @@ def test_forecast_shape_and_ordering(client):
 
 @needs_model
 def test_forecast_carries_actuals_where_the_week_has_happened(client):
-    """The servable window sits after the training cutoff but inside the recorded
-    data, so these weeks have already occurred and the truth is known.
-
-    Returning it lets a client score the forecast without a second data source -
-    which is what the dashboard's performance page relies on.
-    """
     body = client.post("/forecast", json={"horizon_weeks": 8}).json()
     points = [p for s in body["sites"] for p in s["forecast"]]
 
@@ -190,11 +188,6 @@ def test_forecast_carries_actuals_where_the_week_has_happened(client):
 
 @needs_model
 def test_actuals_in_the_response_reproduce_the_holdout_mape(client):
-    """Guards the field's meaning, not just its presence.
-
-    A plausible-looking column that is subtly the wrong series would still pass a
-    not-null check. Scoring it against the model card catches that.
-    """
     body = client.post("/forecast", json={"horizon_weeks": 8}).json()
     points = [p for s in body["sites"] for p in s["forecast"]]
     df = pd.DataFrame([p for p in points if p["actual_tonnes"]])
@@ -283,12 +276,6 @@ def test_an_override_moves_the_prediction_and_reports_the_baseline(client):
 
 @needs_model
 def test_an_override_beyond_the_training_range_is_flagged(client):
-    """The important one.
-
-    A random forest averages training leaves, so past the largest pour ever
-    recorded the prediction stops moving. Left unflagged it would return a
-    confident number for an input it cannot answer, so the response must say so.
-    """
     body = client.post("/predict", json={"site_id": "SITE_001",
                                          "week": "2024-10-07",
                                          "planned_pour_tonnes": 900}).json()
@@ -298,12 +285,6 @@ def test_an_override_beyond_the_training_range_is_flagged(client):
 
 @needs_model
 def test_the_range_check_is_per_site_not_per_estate(client):
-    """The bug this replaced.
-
-    SITE_009 has never poured above 118 t while the estate maximum is 403 t. An
-    estate-wide check waves 300 t through as in-range, which is exactly the
-    plausible-looking answer the flag exists to challenge.
-    """
     body = client.post("/predict", json={"site_id": "SITE_009",
                                          "week": "2024-10-07",
                                          "planned_pour_tonnes": 300}).json()
