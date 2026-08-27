@@ -2,6 +2,8 @@
 
 FROM python:3.11-slim AS builder
 WORKDIR /build
+# Runtime layer only. The API does not import mlflow, pytest or anything from
+# the notebooks, so it does not install them.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 

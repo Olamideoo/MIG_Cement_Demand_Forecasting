@@ -1,0 +1,13 @@
+# Training job: everything the services need, plus experiment tracking.
+#
+# mlflow is here rather than in requirements.txt because only the training
+# pipeline imports it - and it is not a small addition, pulling in Flask,
+# SQLAlchemy, Alembic and GitPython. The api and dashboard images have no reason
+# to carry any of that.
+#
+# The same file backs the mlflow service in docker-compose.yml, which reuses the
+# training image so the server is guaranteed to be the version that wrote the runs.
+
+-r requirements.txt
+
+mlflow

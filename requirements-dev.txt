@@ -1,0 +1,22 @@
+# Local development and CI: everything above, plus the tools that never ship.
+#
+#   pip install -r requirements-dev.txt
+#
+# Nothing in src/, DASHBOARD/ or tests/ imports the notebook packages below -
+# they exist for NOTEBOOKS/ only, which is why no image installs this file.
+
+-r requirements-train.txt
+
+# --- tests and linting ---
+pytest
+ruff
+
+# --- baseline model, used in the notebooks to justify the random forest ---
+statsmodels             # SARIMAX
+
+# --- notebooks ---
+jupyter
+ipykernel
+matplotlib
+seaborn
+openpyxl

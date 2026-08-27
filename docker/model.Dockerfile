@@ -12,8 +12,10 @@
 
 FROM python:3.11-slim AS builder
 WORKDIR /build
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# The training layer: runtime dependencies plus mlflow. This image also backs the
+# mlflow service in compose, so the server is the same version that wrote the runs.
+COPY requirements.txt requirements-train.txt ./
+RUN pip install --no-cache-dir --prefix=/install -r requirements-train.txt
 
 FROM python:3.11-slim
 RUN useradd -m -u 1000 appuser

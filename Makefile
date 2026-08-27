@@ -3,7 +3,7 @@
 setup:            ## create venv, install deps, install package editable
 	python -m venv .venv
 	.venv/bin/pip install -U pip
-	.venv/bin/pip install -r requirements.txt
+	.venv/bin/pip install -r requirements-dev.txt
 	.venv/bin/pip install -e .
 	.venv/bin/nbstripout --install
 

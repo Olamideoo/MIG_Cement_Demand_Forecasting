@@ -2,6 +2,8 @@
 
 FROM python:3.11-slim AS builder
 WORKDIR /build
+# Runtime layer only. The dashboard charts with plotly, not matplotlib or
+# seaborn - those are notebook packages and stay out of this image.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 

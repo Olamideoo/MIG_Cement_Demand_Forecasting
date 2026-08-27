@@ -41,39 +41,41 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements*.txt
 
+      # requirements-dev.txt, because CI needs pytest and ruff. It layers on
+      # requirements-train.txt, which layers on requirements.txt - so this
+      # installs the runtime set, mlflow, the test tools and the notebook
+      # packages. The images install the narrower layers.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           pip install -e . --no-deps
 
       - name: Lint
         run: ruff check src DASHBOARD tests
 
-      # Train before testing, and the ordering is the whole point.
+      # Train before testing, and the ordering is the point.
       #
-      # MODELS/*.joblib is gitignored, so a fresh clone has the database but no
-      # model. Run the suite in that state and 29 of the 44 tests skip - and
-      # they are precisely the ones that check the endpoints return correct
-      # numbers: that /forecast reproduces the 12.77% hold-out MAPE, that
-      # /predict's range guard is per-site, that /inventory matches the local
-      # simulation. CI would go green having verified request validation and
-      # error handling but never a single prediction.
+      # The model itself is committed, so a checkout can serve predictions. What
+      # is not committed is DATA/processed/ - per_site_sigma.parquet and
+      # test_forecasts.parquet are gitignored derived data. Without them the API
+      # falls back to one estate-wide sigma in place of per-site values, and the
+      # tests that score forecasts skip. Training regenerates both, so the suite
+      # asserts against real numbers rather than a fallback.
       #
-      # Training costs about a minute (300 trees, 4,320 rows) and turns those
-      # skips into assertions. It also covers pipeline.py itself, which nothing
-      # in tests/ imports.
+      # It also exercises pipeline.py, which nothing in tests/ imports, and
+      # checks the committed model can still be reproduced from the data.
       #
-      # --no-tracking because there is no MLflow server on a runner, and CI
-      # builds are not experiments worth recording.
+      # --no-tracking: no MLflow server on a runner, and CI builds are not
+      # experiments worth recording.
       - name: Train the model
         run: python -m mig_cement.pipeline --no-tracking
 
       # -rs prints skip reasons. With the artefacts present nothing should skip,
-      # so anything reported here is a signal that the step above did not
-      # produce what the tests expect.
+      # so anything reported here means the step above did not produce what the
+      # tests expect.
       - name: Test
         run: pytest tests -q -rs
 
@@ -89,20 +91,26 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Build only - no push, no registry credentials. This answers one
-      # question: do the three Dockerfiles still produce images? The api image
-      # copies MODELS/, which is absent on a runner, so it is built with a
-      # placeholder rather than skipped - see below.
-      - name: Create a placeholder model artefact
-        # COPY MODELS/ fails outright on an empty directory, and a build failure
-        # for a reason that only exists in CI teaches people to ignore CI. The
-        # placeholder makes the COPY succeed; nothing in this job runs the API,
-        # so its contents never matter.
-        run: |
-          mkdir -p MODELS
-          echo "placeholder for CI - not a real model" > MODELS/rf_demand_forecaster.joblib
-          echo '{"name": "ci-placeholder"}' > MODELS/rf_demand_forecaster_meta.json
+      # DATA/processed/ is gitignored, so a checkout has only .gitkeep there and
+      # `COPY DATA/processed/` would copy an empty directory. The api image would
+      # still build, but silently without per_site_sigma.parquet. Generating it
+      # here means the image this job builds is the image a deploy would get.
+      #
+      # MODELS/ needs no such treatment - the model is committed.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
 
+      - name: Generate the derived data the api image expects
+        run: |
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+          python -m mig_cement.pipeline --no-tracking
+
+      # Build only - no push, no registry credentials. One question: do the
+      # three Dockerfiles still produce images?
       - name: Build all three images
         run: docker compose -f docker/docker-compose.yml build
 

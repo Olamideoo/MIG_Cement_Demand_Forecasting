@@ -1,26 +1,32 @@
+# Runtime dependencies for the API and the dashboard - nothing else.
+#
+# Three files, layered:
+#
+#   requirements.txt        what the running services import   (this file)
+#   requirements-train.txt  the above, plus experiment tracking
+#   requirements-dev.txt    the above, plus tests, linting and notebooks
+#
+# The split exists because every image installs from one of these, and the api
+# and dashboard images were previously pulling in JupyterLab, Notebook,
+# matplotlib and seaborn - none of which appears in a single runtime import.
+# Keep it that way: if a package is only used in NOTEBOOKS/, it belongs in
+# requirements-dev.txt.
+
+# --- core ---
 # scikit-learn is pinned because the model is a pickle. Unpickling under a
 # different version warns at best and changes behaviour at worst, and the
 # version below is the one recorded in rf_demand_forecaster_meta.json.
 # Retrain before changing it.
 numpy
 pandas
-pyarrow                 # parquet
+pyarrow                 # pandas' parquet engine - imported indirectly, still required
 scikit-learn==1.9.0
-statsmodels             # SARIMAX baseline
 joblib                  # model persistence
 
 # --- config ---
 pydantic
 pydantic-settings
 python-dotenv           # reads .env for API_BASE_URL
-
-# --- experiment tracking ---
-# Only the training job imports this; the API and dashboard never do. It is here
-# rather than in a separate training requirements file because all three images
-# install from this one file, and splitting it would touch all three Dockerfiles.
-# If image size becomes a concern on ECS, that split is the fix - mlflow pulls in
-# Flask, SQLAlchemy and Alembic, none of which serving needs.
-mlflow
 
 # --- api ---
 fastapi
@@ -30,14 +36,3 @@ httpx                   # the dashboard's HTTP client, and TestClient
 # --- dashboard ---
 streamlit
 plotly
-
-# --- tests and linting ---
-pytest
-ruff
-
-# --- notebooks ---
-jupyter
-ipykernel
-matplotlib
-seaborn
-openpyxl

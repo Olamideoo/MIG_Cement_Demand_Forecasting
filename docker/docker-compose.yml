@@ -57,8 +57,17 @@ services:
       - --port
       - "5000"
 
+      # MLflow 3 refuses Host headers it does not recognise, to blunt DNS
+      # rebinding. Localhost and private IPs are allowed by default, so a
+      # browser on the same machine works - but the model container connects as
+      # "mlflow:5000" and a browser on the internet sends the instance's public
+      # address, and both are refused with a flat 403.
+      #
+      # Set PUBLIC_HOST in .env on the server, e.g. PUBLIC_HOST=3.142.149.56:5000
+      # (or the bare host if it arrives through a proxy on port 80). Defaults to
+      # localhost, so a laptop needs no configuration.
       - --allowed-hosts
-      - mlflow:5000,localhost:5000,127.0.0.1:5000
+      - mlflow:5000,localhost:5000,127.0.0.1:5000,${PUBLIC_HOST:-localhost:5000}
       
       - --workers
       - "1"
@@ -90,3 +99,4 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+

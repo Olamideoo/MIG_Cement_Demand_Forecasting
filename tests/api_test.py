@@ -7,10 +7,13 @@ application object in-process.
 
 Two things shape the design:
 
-1. **The model artefact is not in git.** `MODELS/*.joblib` is gitignored, so a
-   fresh clone or a CI runner has the database but no trained model. Tests that
-   need predictions are marked `artefacts` and skip cleanly when it is absent,
-   rather than failing and teaching everyone to ignore red builds.
+1. **Derived data may be absent.** The model itself is committed, but
+   `DATA/processed/` is gitignored, so a fresh clone has no
+   `test_forecasts.parquet` and no `per_site_sigma.parquet` until the pipeline
+   has been run. Tests that need them skip cleanly via `skipif` on the file's
+   existence, rather than failing and teaching everyone to ignore red builds.
+   The check is automatic rather than a marker, so the suite adapts to whatever
+   is present instead of depending on the right flag being passed.
 
 2. **Startup is expensive.** Loading the model and rebuilding the weekly panel
    from SQLite takes several seconds, so the client is module-scoped and that
@@ -18,7 +21,7 @@ Two things shape the design:
 
 Run:
     pytest tests/api_test.py -v
-    pytest tests/api_test.py -m "not artefacts"     # no model needed
+    pytest tests/api_test.py -q -rs                 # -rs lists what skipped and why
 """
 
 from __future__ import annotations
